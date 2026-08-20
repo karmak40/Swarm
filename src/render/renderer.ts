@@ -62,6 +62,11 @@ export class Renderer {
     this.dpr = Math.min(this.profile.maxDpr, window.devicePixelRatio || 1);
     const w = this.canvas.clientWidth || window.innerWidth;
     const h = this.canvas.clientHeight || window.innerHeight;
+    // Some mobile browsers briefly report a 0×0 viewport mid-rotation or while
+    // backgrounded. Applying that would strand the canvas — and every touch
+    // hit-test, which reads its bounding rect — at zero size until another
+    // resize event happened to come along to fix it. Keep the last good size.
+    if (w <= 0 || h <= 0) return;
     this.width = w;
     this.height = h;
     this.insets = readSafeAreaInsets();

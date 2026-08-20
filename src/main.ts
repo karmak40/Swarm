@@ -15,6 +15,7 @@ import { TouchInput } from './core/touch';
 import { TouchHud } from './render/touchHud';
 import { detectCoarsePointer, detectQuality, isPortrait, type Quality } from './core/platform';
 import { detectLocale, setLocale, getLocale, t } from './core/i18n';
+import { hideStatusBar, lockLandscape, onBackButton, minimizeApp } from './core/native';
 
 /**
  * Application shell.
@@ -277,19 +278,22 @@ canvas.addEventListener('pointerdown', (e) => {
 /* Global keys                                                                 */
 /* -------------------------------------------------------------------------- */
 
-addEventListener('keydown', (e) => {
-  if (e.code === 'Escape') {
-    if (state === 'playing') {
-      state = 'paused';
-      game.frozen = true;
-      audio.play('uiBack');
-      screens.showPause(game.progress, game.inBuildPhase);
-    } else if (state === 'paused') {
-      screens.close();
-      state = 'playing';
-      game.frozen = false;
-    }
+/** Shared by the Escape key and the Android hardware back button. */
+function togglePause() {
+  if (state === 'playing') {
+    state = 'paused';
+    game.frozen = true;
+    audio.play('uiBack');
+    screens.showPause(game.progress, game.inBuildPhase);
+  } else if (state === 'paused') {
+    screens.close();
+    state = 'playing';
+    game.frozen = false;
   }
+}
+
+addEventListener('keydown', (e) => {
+  if (e.code === 'Escape') togglePause();
   if (e.code === 'Tab') {
     e.preventDefault();
     hud.showStats = !hud.showStats;
@@ -300,6 +304,21 @@ addEventListener('keydown', (e) => {
     audio.setMuted(s.muted);
     saveNow(game.progress.data);
   }
+});
+
+// Android hardware/gesture back button — a no-op listener registration on
+// web and iOS, since neither platform has an equivalent event.
+onBackButton(() => {
+  if (state === 'playing' || state === 'paused') {
+    togglePause();
+  } else if (screens.current === null || screens.current === 'title') {
+    minimizeApp();
+  }
+  // Any other modal screen (settings, achievements, level select, …): swallow
+  // the press rather than guess a destination. Several of their own "Back"
+  // buttons return to the title screen regardless of how they were opened,
+  // so mirroring that via hardware back risks quietly abandoning a run that
+  // was only paused to open, say, Settings.
 });
 
 function onViewportChange() {
@@ -461,14 +480,21 @@ function updateOrientationGate() {
   }
 }
 
-/** Fullscreen has to be requested from a gesture; the first tap is the moment. */
+/**
+ * Fullscreen has to be requested from a gesture; the first tap is the moment.
+ *
+ * The orientation lock and status bar hide route through Capacitor's plugin
+ * API (see core/native.ts) instead of the raw web APIs — that also gives the
+ * native Android/iOS builds a real lock instead of relying on the WebView's
+ * patchy support for the Screen Orientation Web API.
+ */
 async function tryFullscreen() {
   if (!touchMode) return;
+  void hideStatusBar();
+  void lockLandscape();
   if (document.fullscreenElement) return;
   try {
     await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
-    const o = (screen as unknown as { orientation?: { lock?: (m: string) => Promise<void> } }).orientation;
-    await o?.lock?.('landscape');
   } catch {
     // Denied or unsupported — the game still works in the browser chrome.
   }
