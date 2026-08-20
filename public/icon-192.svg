@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192">
+  <defs>
+    <radialGradient id="g" cx="50%" cy="45%" r="60%">
+      <stop offset="0%" stop-color="#1a2b45"/>
+      <stop offset="100%" stop-color="#05070c"/>
+    </radialGradient>
+    <radialGradient id="core" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="35%" stop-color="#46d8ff"/>
+      <stop offset="100%" stop-color="#46d8ff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="192" height="192" fill="url(#g)"/>
+  <g transform="translate(96.0 96.0)">
+    <!-- containment hex -->
+    <polygon points="49.9,28.8 0.0,57.6 -49.9,28.8 -49.9,-28.8 -0.0,-57.6 49.9,-28.8" fill="none" stroke="#2c3a4e" stroke-width="6.720000000000001"/>
+    <polygon points="39.9,23.0 0.0,46.1 -39.9,23.0 -39.9,-23.0 -0.0,-46.1 39.9,-23.0" fill="#121926" stroke="#46d8ff" stroke-width="2.688" opacity="0.8"/>
+    <!-- reactor heart -->
+    <circle r="36.480000000000004" fill="url(#core)"/>
+    <!-- swarm ticks closing in -->
+    <g fill="#ff4f5e" opacity="0.9">
+      <polygon points="81.4,15.3 69.1,10.3 69.1,20.2" transform="rotate(191 75.3 15.3)"/>
+      <polygon points="48.6,64.0 36.3,59.1 36.3,68.9" transform="rotate(236 42.4 64.0)"/>
+      <polygon points="-9.1,75.3 -21.4,70.4 -21.4,80.2" transform="rotate(281 -15.3 75.3)"/>
+      <polygon points="-57.9,42.4 -70.2,37.5 -70.2,47.3" transform="rotate(326 -64.0 42.4)"/>
+      <polygon points="-69.1,-15.3 -81.4,-20.2 -81.4,-10.3" transform="rotate(371 -75.3 -15.3)"/>
+      <polygon points="-36.3,-64.0 -48.6,-68.9 -48.6,-59.1" transform="rotate(416 -42.4 -64.0)"/>
+      <polygon points="21.4,-75.3 9.1,-80.2 9.1,-70.4" transform="rotate(461 15.3 -75.3)"/>
+      <polygon points="70.2,-42.4 57.9,-47.3 57.9,-37.5" transform="rotate(506 64.0 -42.4)"/>
+    </g>
+  </g>
+</svg>
