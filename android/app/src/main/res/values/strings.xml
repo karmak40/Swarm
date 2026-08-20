@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">SWARM</string>
+    <string name="title_activity_main">SWARM</string>
+    <string name="package_name">com.onyxsystems.swarm</string>
+    <string name="custom_url_scheme">com.onyxsystems.swarm</string>
+</resources>

@@ -470,6 +470,93 @@ async function tryFullscreen() {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Crash handling                                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A `requestAnimationFrame` callback that throws never reports anything to the
+ * player: the browser eats the error, the callback simply never reschedules
+ * itself, and the last drawn frame just sits there looking like a hang. This
+ * is the one recovery path for that — stop, save whatever is safe to save,
+ * and tell the player instead of leaving them staring at a dead screen.
+ */
+let crashed = false;
+
+function showCrash(err: unknown) {
+  if (crashed) return;
+  crashed = true;
+
+  console.error('[SWARM] unhandled error', err);
+
+  // Best-effort persistence. Neither call is allowed to block the crash UI —
+  // autoSaveRun already no-ops outside a build phase, but a corrupted state is
+  // exactly the situation where "safe elsewhere" assumptions stop holding.
+  try { game.autoSaveRun(); } catch { /* ignore */ }
+  try { saveNow(game.progress.data); } catch { /* ignore */ }
+
+  try {
+    const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    const stack = err instanceof Error && err.stack ? err.stack : '';
+    const details = `${message}\n${stack}`.trim();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'crash-overlay';
+    const panel = document.createElement('div');
+    panel.className = 'crash-panel';
+
+    const title = document.createElement('div');
+    title.className = 'crash-title';
+    title.textContent = t('main.crash.title', 'Something went wrong');
+    panel.appendChild(title);
+
+    const sub = document.createElement('p');
+    sub.className = 'crash-sub';
+    sub.textContent = t('main.crash.sub',
+      'The game hit an unexpected error and stopped. Anything saved at your last build phase is safe.');
+    panel.appendChild(sub);
+
+    const detailsBox = document.createElement('textarea');
+    detailsBox.className = 'crash-details';
+    detailsBox.readOnly = true;
+    detailsBox.value = details;
+    panel.appendChild(detailsBox);
+
+    const actions = document.createElement('div');
+    actions.className = 'crash-actions';
+
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'btn ghost';
+    copyBtn.textContent = t('main.crash.copy', 'Copy details');
+    copyBtn.addEventListener('click', () => {
+      navigator.clipboard?.writeText(details).then(
+        () => { copyBtn.textContent = t('main.crash.copied', 'Copied'); },
+        () => { /* clipboard unavailable — the text is still there to select by hand */ },
+      );
+    });
+    actions.appendChild(copyBtn);
+
+    const reloadBtn = document.createElement('button');
+    reloadBtn.className = 'btn';
+    reloadBtn.textContent = t('main.crash.reload', 'Reload');
+    reloadBtn.addEventListener('click', () => location.reload());
+    actions.appendChild(reloadBtn);
+
+    panel.appendChild(actions);
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+  } catch {
+    // The styled overlay itself failed to build — fall back to the one path
+    // that can't, so the player at least learns the game died and why.
+    alert('SWARM hit an unexpected error and needs to reload.');
+  }
+}
+
+// Defence in depth: this catches anything NOT already caught inside frame()
+// below — event handlers, timers, async code elsewhere in the app.
+window.addEventListener('error', (e) => showCrash(e.error ?? e.message));
+window.addEventListener('unhandledrejection', (e) => showCrash(e.reason));
+
+/* -------------------------------------------------------------------------- */
 /* Loop                                                                        */
 /* -------------------------------------------------------------------------- */
 
@@ -479,6 +566,16 @@ let fpsSmoothed = 60;
 let bootDone = false;
 
 function frame(now: number) {
+  try {
+    stepFrame(now);
+  } catch (err) {
+    showCrash(err);
+    return; // Do not reschedule — the simulation state may be corrupted.
+  }
+  requestAnimationFrame(frame);
+}
+
+function stepFrame(now: number) {
   const rawDt = Math.min(0.1, (now - last) / 1000);
   last = now;
   fpsSmoothed += (1 / Math.max(1e-4, rawDt) - fpsSmoothed) * 0.06;
@@ -521,7 +618,6 @@ function frame(now: number) {
   }
 
   input.endFrame();
-  requestAnimationFrame(frame);
 }
 
 const idleStars: { x: number; y: number; z: number }[] = [];

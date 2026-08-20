@@ -373,6 +373,12 @@ export const de: Record<string, string> = {
   'main.resume.unknownSector': 'Unbekannter Sektor',
   'main.rotate.msg': 'Dreht euer Gerät',
   'main.rotate.sub': 'SWARM wird im Querformat gespielt',
+  'main.crash.title': 'Etwas ist schiefgelaufen',
+  'main.crash.sub': 'Das Spiel ist auf einen unerwarteten Fehler gestoßen und wurde angehalten. Alles, was in '
+    + 'eurer letzten Bauphase gespeichert wurde, ist sicher.',
+  'main.crash.copy': 'Details kopieren',
+  'main.crash.copied': 'Kopiert',
+  'main.crash.reload': 'Neu laden',
 
   /* ------------------------------------------------------------------ */
   /* touchHud.ts                                                          */
