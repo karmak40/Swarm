@@ -534,16 +534,18 @@ body.portrait-block #rotate { display: flex; }
 .crash-actions { display: flex; gap: 12px; justify-content: flex-end; }
 
 /* Short landscape phones: roughly 375px of height for everything. The menu wins,
-   so the pitch copy and the lifetime stats strip step aside and the buttons go
-   two-up. */
+   so the pitch copy steps aside and the buttons go two-up. There is width to
+   spare even though height is tight, though — the lifetime-stats grid and the
+   campaign-progress pips move beside the menu instead of disappearing with it,
+   so the screen still reads as a full landscape layout rather than a narrow
+   portrait one stranded in the middle of the display. */
 @media (max-height: 540px) {
   body.touch .screen { gap: 10px; padding: 10px 0; }
   body.touch .screen .stack { gap: 10px; }
   body.touch .title { font-size: clamp(30px, 7vw, 48px); }
   body.touch .subtitle { font-size: 10px; letter-spacing: 0.34em; }
   body.touch .screen h2 { font-size: clamp(18px, 4vw, 26px); }
-  body.touch .flavor.pitch,
-  body.touch .stat-grid.title-stats { display: none; }
+  body.touch .flavor.pitch { display: none; }
   body.touch .screen .flavor { font-size: 12px; line-height: 1.5; }
 
   body.touch .menu-col {
@@ -554,6 +556,30 @@ body.portrait-block #rotate { display: flex; }
   }
   /* 15px padding keeps the hit box at/above the 44px touch-target guideline. */
   body.touch .btn { padding: 15px 12px; font-size: 12px; letter-spacing: 0.07em; }
+
+  /* Title screen only: two columns instead of one long one — progress/stats
+     on the left, logo and menu on the right — using the width a landscape
+     phone actually has instead of stacking everything under it. */
+  body.touch .title-stack {
+    display: grid;
+    grid-template-columns: minmax(170px, 240px) auto;
+    grid-auto-rows: min-content;
+    align-items: center;
+    justify-items: center;
+    gap: 8px 26px;
+    width: min(760px, 96vw);
+  }
+  body.touch .title-stack > .title { grid-column: 2; grid-row: 1; }
+  body.touch .title-stack > .subtitle { grid-column: 2; grid-row: 2; }
+  body.touch .title-stack > .menu-col { grid-column: 2; grid-row: 3; }
+  body.touch .title-stack > .campaign-progress { grid-column: 1; grid-row: 1; align-self: end; }
+  body.touch .title-stack > .stat-grid.title-stats {
+    grid-column: 1;
+    grid-row: 2 / 4;
+    align-self: start;
+    width: 100%;
+    grid-template-columns: repeat(2, 1fr);
+  }
 
   body.touch .card-row { gap: 10px; }
   body.touch .tech-card { width: min(190px, 30vw); padding: 12px; }

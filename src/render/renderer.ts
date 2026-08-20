@@ -4,7 +4,7 @@ import { Tile, TILE } from '../game/world';
 import type { Game } from '../game/game';
 import { BUILDINGS } from '../data/buildings';
 import { css, rgba, lighten, darken, mix } from './palette';
-import { QUALITY, type Quality, type QualityProfile } from '../core/platform';
+import { QUALITY, readSafeAreaInsets, type Quality, type QualityProfile, type SafeInsets } from '../core/platform';
 import { drawBuilding, drawDrone, drawEnemy, lightning, poly, star, techRect } from './shapes';
 
 /**
@@ -30,6 +30,8 @@ export class Renderer {
   width = 0;
   height = 0;
   dpr = 1;
+  /** Notch/Dynamic Island/home-indicator clearance, in CSS px. Refreshed on resize. */
+  insets: SafeInsets = { top: 0, right: 0, bottom: 0, left: 0 };
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -62,6 +64,7 @@ export class Renderer {
     const h = this.canvas.clientHeight || window.innerHeight;
     this.width = w;
     this.height = h;
+    this.insets = readSafeAreaInsets();
     this.canvas.width = Math.floor(w * this.dpr);
     this.canvas.height = Math.floor(h * this.dpr);
     this.glow.width = Math.max(1, Math.floor(w * this.glowScale));

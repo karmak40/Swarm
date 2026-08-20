@@ -7,6 +7,7 @@ import { Tile, TILE } from '../game/world';
 import type { Game } from '../game/game';
 import { css, rgba } from './palette';
 import { techRect } from './shapes';
+import type { SafeInsets } from '../core/platform';
 
 type Ctx = CanvasRenderingContext2D;
 
@@ -35,6 +36,8 @@ export class Hud {
   compact = false;
   /** Extra scale for text and gauges, from the UI scale setting. */
   uiScale = 1;
+  /** Notch/Dynamic Island/home-indicator clearance, so corner readouts clear the cutout. */
+  insets: SafeInsets = { top: 0, right: 0, bottom: 0, left: 0 };
 
   draw(ctx: Ctx, game: Game, w: number, h: number, fps: number) {
     ctx.save();
@@ -76,7 +79,8 @@ export class Hud {
    */
   private compactTopBar(ctx: Ctx, game: Game, w: number) {
     const s = this.uiScale;
-    const H = Math.round(58 * s);
+    const { top: insetTop, right: insetRight, left: insetLeft } = this.insets;
+    const H = Math.round(58 * s) + insetTop;
 
     const grad = ctx.createLinearGradient(0, 0, 0, H + 10);
     grad.addColorStop(0, 'rgba(5,8,14,0.94)');
@@ -84,10 +88,12 @@ export class Hud {
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, H + 10);
 
-    const pad = Math.round(14 * s);
+    // The notch/Dynamic Island lands on a side in landscape, not necessarily
+    // the top — insets.left/right keep this strip's readouts off it.
+    const pad = Math.round(14 * s) + insetLeft;
     let x = pad;
-    const row1 = Math.round(15 * s);
-    const row2 = Math.round(34 * s);
+    const row1 = Math.round(15 * s) + insetTop;
+    const row2 = Math.round(34 * s) + insetTop;
 
     // Resources on one line, glyph + value only — labels do not survive the space.
     ctx.textAlign = 'left';
@@ -144,13 +150,14 @@ export class Hud {
     ctx.textAlign = 'right';
     ctx.font = `500 ${Math.round(11 * s)}px ${MONO}`;
     ctx.fillStyle = css(0x8fa3c0);
-    ctx.fillText(fmtTime(game.runStats.timeSeconds), w - Math.round(62 * s), row1);
+    ctx.fillText(fmtTime(game.runStats.timeSeconds), w - Math.round(62 * s) - insetRight, row1);
   }
 
   /* ---- top resource strip ---------------------------------------------- */
 
   private topBar(ctx: Ctx, game: Game, w: number) {
-    const H = 52;
+    const { top: insetTop, right: insetRight, left: insetLeft } = this.insets;
+    const H = 52 + insetTop;
     const grad = ctx.createLinearGradient(0, 0, 0, H + 16);
     grad.addColorStop(0, 'rgba(5,8,14,0.92)');
     grad.addColorStop(1, 'rgba(5,8,14,0)');
@@ -164,7 +171,7 @@ export class Hud {
     ctx.lineTo(w, H);
     ctx.stroke();
 
-    let x = 24;
+    let x = 24 + insetLeft;
     x = this.resource(ctx, x, H / 2, '◆', tr('hud.resources.ore', 'ORE'), fmtNum(game.ore), 0x7fd9ff);
     x = this.resource(ctx, x, H / 2, '✦', tr('hud.resources.essence', 'ESSENCE'), fmtNum(game.essence), 0xb47cff);
 
@@ -184,18 +191,18 @@ export class Hud {
     ctx.textAlign = 'center';
     ctx.font = `600 15px ${UI_FONT}`;
     ctx.fillStyle = css(0xe7f0ff);
-    ctx.fillText(levelName(game.level).toUpperCase(), w / 2, 18);
+    ctx.fillText(levelName(game.level).toUpperCase(), w / 2, 18 + insetTop);
     ctx.font = `400 10px ${UI_FONT}`;
     ctx.fillStyle = css(0x8fa3c0);
-    ctx.fillText(levelSubtitle(game.level).toUpperCase(), w / 2, 35);
+    ctx.fillText(levelSubtitle(game.level).toUpperCase(), w / 2, 35 + insetTop);
 
     // Clock + achievement counter on the right.
     ctx.textAlign = 'right';
     ctx.font = `500 13px ${MONO}`;
     ctx.fillStyle = css(0x8fa3c0);
-    ctx.fillText(fmtTime(game.runStats.timeSeconds), w - 24, 18);
+    ctx.fillText(fmtTime(game.runStats.timeSeconds), w - 24 - insetRight, 18 + insetTop);
     ctx.font = `500 11px ${UI_FONT}`;
-    ctx.fillText(`🏆 ${game.progress.unlockedCount}/${game.progress.totalCount}`, w - 24, 35);
+    ctx.fillText(`🏆 ${game.progress.unlockedCount}/${game.progress.totalCount}`, w - 24 - insetRight, 35 + insetTop);
   }
 
   private resource(ctx: Ctx, x: number, y: number, glyph: string, label: string, value: string, color: number) {
@@ -218,7 +225,7 @@ export class Hud {
   private waveTracker(ctx: Ctx, game: Game, w: number) {
     const cx = w / 2;
     const s = this.compact ? this.uiScale : 1;
-    const y = this.compact ? Math.round(14 * s) : 66;
+    const y = this.compact ? Math.round(14 * s) + this.insets.top : 66;
     const bw = this.compact ? Math.min(w * 0.42, 260 * s) : 360;
 
     const isPrep = game.inBuildPhase;
@@ -326,7 +333,7 @@ export class Hud {
     const scale = slot / 62;
     const totalW = kinds.length * slot + (kinds.length - 1) * gap;
     const x0 = (w - totalW) / 2;
-    const y0 = h - slot - 26;
+    const y0 = h - slot - 26 - this.insets.bottom;
 
     ctx.fillStyle = 'rgba(5,8,14,0.6)';
     ctx.fillRect(0, y0 - 14, w, slot + 40);
@@ -396,7 +403,7 @@ export class Hud {
     const mode = game.cursorMode === 'sell' ? tr('hud.buildBar.legendSell', 'SELL MODE — click a structure   ·   Q to exit')
       : game.cursorMode === 'build' ? tr('hud.buildBar.legendBuild', 'LMB place   ·   RMB cancel   ·   E repair   ·   T targeting')
       : tr('hud.buildBar.legendNormal', 'WASD move   ·   LMB fire   ·   RMB mine   ·   SHIFT dash   ·   Q sell   ·   E repair   ·   TAB stats');
-    ctx.fillText(mode, w / 2, h - 12);
+    ctx.fillText(mode, w / 2, h - 12 - this.insets.bottom);
   }
 
   /* ---- minimap --------------------------------------------------------- */
@@ -411,8 +418,8 @@ export class Hud {
     // the top-right, under the pause and overview buttons.
     const size = this.compact ? Math.round(Math.min(118 * s, h * 0.28)) : 168;
     const pad = this.compact ? Math.round(12 * s) : 18;
-    const x0 = w - size - pad;
-    const y0 = this.compact ? Math.round(104 * s) : h - size - pad;
+    const x0 = w - size - pad - this.insets.right;
+    const y0 = this.compact ? Math.round(104 * s) + this.insets.top : h - size - pad - this.insets.bottom;
     const world = game.world;
     const sx = size / world.pxW;
     const sy = size / world.pxH;
@@ -508,8 +515,8 @@ export class Hud {
   /* ---- left status rail ------------------------------------------------ */
 
   private statusRail(ctx: Ctx, game: Game, w: number, h: number) {
-    const x = 22;
-    let y = h - 210;
+    const x = 22 + this.insets.left;
+    let y = h - 210 - this.insets.bottom;
     void w;
 
     // Core integrity.
@@ -588,7 +595,7 @@ export class Hud {
     const e = game.bossRef!;
     const bw = this.compact ? Math.min(420, w - 220) : Math.min(760, w - 200);
     const x = (w - bw) / 2;
-    const y = this.compact ? Math.round(76 * this.uiScale) : 132;
+    const y = this.compact ? Math.round(76 * this.uiScale) + this.insets.top : 132;
 
     ctx.textAlign = 'center';
     ctx.font = `700 20px ${UI_FONT}`;

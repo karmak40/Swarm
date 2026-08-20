@@ -1,4 +1,5 @@
 import type { InputSource } from './input';
+import type { SafeInsets } from './platform';
 
 /**
  * On-screen controls for coarse pointers.
@@ -80,6 +81,7 @@ export class TouchInput implements InputSource {
 
   southpaw = false;
   scale = 1;
+  private insets: SafeInsets = { top: 0, right: 0, bottom: 0, left: 0 };
 
   private w = 0;
   private h = 0;
@@ -112,19 +114,23 @@ export class TouchInput implements InputSource {
   /* Layout                                                                  */
   /* ---------------------------------------------------------------------- */
 
-  layout(w: number, h: number, opts: { southpaw?: boolean; scale?: number } = {}) {
+  layout(w: number, h: number, opts: { southpaw?: boolean; scale?: number; insets?: SafeInsets } = {}) {
     this.w = w;
     this.h = h;
     this.southpaw = opts.southpaw ?? this.southpaw;
     this.scale = opts.scale ?? this.scale;
+    const insets = opts.insets ?? this.insets;
+    this.insets = insets;
 
     const s = this.scale;
     const r = Math.round(34 * s);
     const pad = Math.round(26 * s);
-    // Action cluster sits opposite the movement thumb.
-    const actionX = this.southpaw ? pad + r : w - pad - r;
+    // Action cluster sits opposite the movement thumb. In landscape the
+    // notch/Dynamic Island lands on a side, so whichever edge the cluster
+    // hugs needs that side's inset, not just the bottom's.
+    const actionX = this.southpaw ? pad + r + insets.left : w - pad - r - insets.right;
     const dir = this.southpaw ? 1 : -1;
-    const baseY = h - pad - r;
+    const baseY = h - pad - r - insets.bottom;
 
     this.stick.radius = Math.round(74 * s);
 
@@ -138,15 +144,15 @@ export class TouchInput implements InputSource {
       },
       {
         // Lifted a full radius off the bottom edge so it is never clipped.
-        id: 'startWave', x: w / 2, y: h - Math.round(40 * s),
+        id: 'startWave', x: w / 2, y: h - Math.round(40 * s) - insets.bottom,
         r: Math.round(r * 0.9), tapped: false, held: false, visible: false, enabled: true,
       },
       {
-        id: 'pause', x: w - Math.round(30 * s), y: Math.round(30 * s),
+        id: 'pause', x: w - Math.round(30 * s) - insets.right, y: Math.round(30 * s) + insets.top,
         r: Math.round(22 * s), tapped: false, held: false, visible: true, enabled: true,
       },
       {
-        id: 'map', x: w - Math.round(30 * s), y: Math.round(78 * s),
+        id: 'map', x: w - Math.round(30 * s) - insets.right, y: Math.round(78 * s) + insets.top,
         r: Math.round(22 * s), tapped: false, held: false, visible: true, enabled: true,
       },
     ];

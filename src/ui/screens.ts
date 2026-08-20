@@ -142,12 +142,14 @@ export class Screens {
 
   showTitle(progress: Progress, resumable?: ResumeInfo | null) {
     const s = el('div', 'screen opaque');
-    const stack = el('div', 'stack');
+    const stack = el('div', 'stack title-stack');
 
     stack.appendChild(el('h1', 'title', tr('screens.title.title', 'SWARM')));
     stack.appendChild(el('p', 'subtitle', tr('screens.title.subtitle', 'hold the line')));
-    // `pitch` and `title-stats` are dropped on short landscape phones, where the
-    // menu itself needs every pixel.
+    // The pitch blurb is onboarding copy the player has already read, so it is
+    // the one thing still dropped on short landscape phones. Progress pips and
+    // the lifetime-stats grid move beside the menu instead — see `.title-stack`
+    // in style.css — rather than leaving that width empty.
     stack.appendChild(el('p', 'flavor pitch',
       tr('screens.title.pitch',
         'One reactor core against an endless hive. Mine the seams, wall the approaches, and render the ' +
@@ -159,7 +161,7 @@ export class Screens {
     const total = LEVELS.length;
     const done = cleared >= total;
     if (cleared > 0) {
-      const prog = el('div');
+      const prog = el('div', 'campaign-progress');
       prog.style.display = 'flex';
       prog.style.flexDirection = 'column';
       prog.style.alignItems = 'center';

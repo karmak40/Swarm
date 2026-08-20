@@ -62,12 +62,13 @@ function applyControlScheme() {
   document.body.classList.toggle('touch', touchMode);
   hud.compact = touchMode;
   hud.uiScale = st.uiScale;
+  hud.insets = renderer.insets;
   // Touch has no cursor to aim with and no second button to mine with, so both
   // assists are mandatory there; on desktop they are opt-in.
   game.autoAim = touchMode || st.autoAim;
   game.autoMine = touchMode || st.autoMine;
   touch.setHaptics(st.haptics);
-  touch.layout(renderer.width, renderer.height, { southpaw: st.southpaw, scale: st.uiScale });
+  touch.layout(renderer.width, renderer.height, { southpaw: st.southpaw, scale: st.uiScale, insets: renderer.insets });
   if (!touchMode) touch.reset();
 }
 
@@ -77,9 +78,11 @@ function applyQuality() {
   renderer.setQuality(q);
   game.particles.density = renderer.quality.particleDensity;
   game.setViewport(renderer.width, renderer.height);
+  hud.insets = renderer.insets;
   touch.layout(renderer.width, renderer.height, {
     southpaw: game.progress.data.settings.southpaw,
     scale: game.progress.data.settings.uiScale,
+    insets: renderer.insets,
   });
 }
 
@@ -302,9 +305,11 @@ addEventListener('keydown', (e) => {
 function onViewportChange() {
   renderer.resize();
   game.setViewport(renderer.width, renderer.height);
+  hud.insets = renderer.insets;
   touch.layout(renderer.width, renderer.height, {
     southpaw: game.progress.data.settings.southpaw,
     scale: game.progress.data.settings.uiScale,
+    insets: renderer.insets,
   });
   updateOrientationGate();
 }

@@ -62,3 +62,41 @@ export const isStandalone = () =>
 export function isPortrait(): boolean {
   return window.innerHeight > window.innerWidth;
 }
+
+export interface SafeInsets {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
+const ZERO_INSETS: SafeInsets = { top: 0, right: 0, bottom: 0, left: 0 };
+let insetProbe: HTMLDivElement | null = null;
+
+/**
+ * `env(safe-area-inset-*)` in CSS px, for the notch/Dynamic Island/home-indicator
+ * a native shell (Capacitor iOS/Android) draws under. The canvas HUD is drawn by
+ * hand, so unlike DOM chrome it cannot lean on `env()` in a stylesheet — this
+ * reads the same values into JS via a hidden probe element so corner-anchored
+ * readouts (top bar, minimap, touch buttons) can offset away from the cutout.
+ * In landscape the notch sits on a *side*, so this is a left/right concern as
+ * often as top/bottom.
+ */
+export function readSafeAreaInsets(): SafeInsets {
+  if (typeof document === 'undefined') return ZERO_INSETS;
+  if (!insetProbe) {
+    insetProbe = document.createElement('div');
+    insetProbe.style.cssText =
+      'position:fixed;inset:0;visibility:hidden;pointer-events:none;' +
+      'padding:env(safe-area-inset-top) env(safe-area-inset-right) ' +
+      'env(safe-area-inset-bottom) env(safe-area-inset-left);';
+    document.body.appendChild(insetProbe);
+  }
+  const cs = getComputedStyle(insetProbe);
+  return {
+    top: parseFloat(cs.paddingTop) || 0,
+    right: parseFloat(cs.paddingRight) || 0,
+    bottom: parseFloat(cs.paddingBottom) || 0,
+    left: parseFloat(cs.paddingLeft) || 0,
+  };
+}
