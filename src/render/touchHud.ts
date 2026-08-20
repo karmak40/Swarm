@@ -1,6 +1,7 @@
 import { TAU, clamp } from '../core/math';
 import type { TouchButton, TouchInput } from '../core/touch';
-import { BUILDINGS, type BuildingKind } from '../data/buildings';
+import { BUILDINGS, buildingName, type BuildingKind, type TargetingMode } from '../data/buildings';
+import { t as tr } from '../core/i18n';
 import type { Game } from '../game/game';
 import type { Building } from '../game/entities';
 import { css, rgba } from './palette';
@@ -94,18 +95,18 @@ export class TouchHud {
     switch (b.id) {
       case 'dash':
         glyph = '»';
-        label = 'DASH';
+        label = tr('touchHud.button.dash', 'DASH');
         ready = game.player.dashCooldown <= 0;
         tint = ready ? 0x5cf2a0 : 0x2f5680;
         break;
       case 'build':
         glyph = touch.drawerOpen ? '×' : '⌂';
-        label = touch.drawerOpen ? 'CLOSE' : 'BUILD';
+        label = touch.drawerOpen ? tr('touchHud.button.close', 'CLOSE') : tr('touchHud.button.build', 'BUILD');
         tint = touch.drawerOpen ? 0xffb347 : 0x46d8ff;
         break;
       case 'startWave':
         glyph = '▶';
-        label = 'START';
+        label = tr('touchHud.button.start', 'START');
         tint = 0xffb347;
         break;
       case 'pause':
@@ -177,11 +178,13 @@ export class TouchHud {
     ctx.textAlign = 'left';
     ctx.font = `600 ${Math.round(11 * s)}px ${UI_FONT}`;
     ctx.fillStyle = css(0x46d8ff);
-    ctx.fillText('CONSTRUCT', 20, y0 + Math.round(18 * s));
+    ctx.fillText(tr('touchHud.drawer.construct', 'CONSTRUCT'), 20, y0 + Math.round(18 * s));
     ctx.textAlign = 'right';
     ctx.fillStyle = css(0x7fd9ff);
     ctx.font = `600 ${Math.round(12 * s)}px ${MONO}`;
-    ctx.fillText(`◆ ${Math.floor(game.ore)}   ✦ ${Math.floor(game.essence)}`, w - 20, y0 + Math.round(18 * s));
+    ctx.fillText(tr('touchHud.drawer.resources', '◆ {ore}   ✦ {essence}', {
+      ore: Math.floor(game.ore), essence: Math.floor(game.essence),
+    }), w - 20, y0 + Math.round(18 * s));
 
     const gridTop = y0 + Math.round(34 * s);
     const totalW = perRow * slot + (perRow - 1) * gap;
@@ -214,11 +217,13 @@ export class TouchHud {
 
       ctx.font = `600 ${Math.round(slot * 0.13)}px ${UI_FONT}`;
       ctx.fillStyle = css(0x8fa3c0);
-      ctx.fillText(def.name.toUpperCase().slice(0, 10), x + slot / 2, y + slot * 0.63);
+      ctx.fillText(buildingName(def).toUpperCase().slice(0, 10), x + slot / 2, y + slot * 0.63);
 
       ctx.font = `600 ${Math.round(slot * 0.15)}px ${MONO}`;
       ctx.fillStyle = css(game.ore >= cost.ore ? 0x7fd9ff : 0xff4f5e);
-      const txt = cost.essence > 0 ? `${cost.ore}+${cost.essence}` : `${cost.ore}`;
+      const txt = cost.essence > 0
+        ? tr('touchHud.drawer.costOreEssence', '{ore}+{essence}', { ore: cost.ore, essence: cost.essence })
+        : tr('touchHud.drawer.costOre', '{ore}', { ore: cost.ore });
       ctx.fillText(txt, x + slot / 2, y + slot * 0.84);
       ctx.globalAlpha = 1;
     });
@@ -240,7 +245,9 @@ export class TouchHud {
     const def = game.buildKind ? BUILDINGS[game.buildKind] : null;
     if (!def) return;
     const s = touch.scale;
-    const msg = game.buildValid ? 'TAP TO PLACE' : (game.lastError.text || 'CANNOT BUILD HERE');
+    const msg = game.buildValid
+      ? tr('touchHud.placement.tapToPlace', 'TAP TO PLACE')
+      : (game.lastError.text || tr('touchHud.placement.cannotBuildHere', 'CANNOT BUILD HERE'));
     ctx.textAlign = 'center';
     ctx.font = `600 ${Math.round(13 * s)}px ${UI_FONT}`;
     const tw = ctx.measureText(msg).width;
@@ -270,6 +277,16 @@ export class TouchHud {
     this.menuItems.length = 0;
   }
 
+  /** Localised label for a turret's targeting mode, shown in the context menu. */
+  private targetingLabel(mode: TargetingMode): string {
+    switch (mode) {
+      case 'first': return tr('touchHud.menu.targeting.first', 'FIRST');
+      case 'closest': return tr('touchHud.menu.targeting.closest', 'CLOSEST');
+      case 'strongest': return tr('touchHud.menu.targeting.strongest', 'STRONGEST');
+      case 'weakest': return tr('touchHud.menu.targeting.weakest', 'WEAKEST');
+    }
+  }
+
   private contextMenu(ctx: Ctx, game: Game, w: number, h: number) {
     this.menuItems.length = 0;
     const b = this.menuTarget;
@@ -281,11 +298,11 @@ export class TouchHud {
     const itemW = 128 * s;
     const itemH = 44 * s;
     const items: { id: 'sell' | 'repair' | 'target' | 'close'; text: string; tint: number }[] = [
-      { id: 'repair', text: 'REPAIR', tint: 0x5cf2a0 },
-      { id: 'sell', text: 'SELL', tint: 0xff4f5e },
+      { id: 'repair', text: tr('touchHud.menu.repair', 'REPAIR'), tint: 0x5cf2a0 },
+      { id: 'sell', text: tr('touchHud.menu.sell', 'SELL'), tint: 0xff4f5e },
     ];
-    if (b.isTurret) items.push({ id: 'target', text: b.targeting.toUpperCase(), tint: 0x46d8ff });
-    items.push({ id: 'close', text: 'CLOSE', tint: 0x8fa3c0 });
+    if (b.isTurret) items.push({ id: 'target', text: this.targetingLabel(b.targeting), tint: 0x46d8ff });
+    items.push({ id: 'close', text: tr('touchHud.menu.close', 'CLOSE'), tint: 0x8fa3c0 });
 
     const totalH = items.length * (itemH + 6);
     let x = clamp(this.menu!.screenX + 20, 10, w - itemW - 10);
@@ -301,7 +318,7 @@ export class TouchHud {
     ctx.lineWidth = 1;
     ctx.stroke();
     ctx.fillStyle = css(0xe7f0ff);
-    ctx.fillText(b.def.name.toUpperCase().slice(0, 14), x + 10, y - 18);
+    ctx.fillText(buildingName(b.def).toUpperCase().slice(0, 14), x + 10, y - 18);
 
     items.forEach((it, i) => {
       const iy = y + i * (itemH + 6);
@@ -321,7 +338,10 @@ export class TouchHud {
         ctx.textAlign = 'right';
         ctx.font = `500 11px ${MONO}`;
         ctx.fillStyle = css(0x8fa3c0);
-        ctx.fillText(`${Math.round(b.pct * 100)}%`, x + itemW - 12, iy + itemH / 2);
+        ctx.fillText(
+          tr('touchHud.menu.repairPercent', '{pct}%', { pct: Math.round(b.pct * 100) }),
+          x + itemW - 12, iy + itemH / 2,
+        );
       }
     });
   }

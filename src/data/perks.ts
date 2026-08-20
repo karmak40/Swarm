@@ -1,3 +1,5 @@
+import { t } from '../core/i18n';
+
 /**
  * Perks are the single funnel through which *all* modifiers reach the
  * simulation: achievement rewards, drafted tech cards and level bonuses all
@@ -72,31 +74,41 @@ export function applyPerk(target: Perks, delta: PerkDelta) {
   }
 }
 
+/** English label for each multiplicative field — the fallback and translation key source. */
+const FIELD_LABEL: Record<string, string> = {
+  turretDamage: 'turret damage', turretFireRate: 'turret fire rate', turretRange: 'turret range',
+  playerDamage: 'weapon damage', playerFireRate: 'weapon fire rate', playerMaxHp: 'max health',
+  playerSpeed: 'move speed', miningSpeed: 'mining speed', oreYield: 'ore yield',
+  essenceYield: 'essence yield', buildCost: 'build cost', sellRefund: 'sell refund',
+  extractorRate: 'extractor rate', structureHp: 'structure HP', coreHp: 'core HP',
+  powerOutput: 'power output', repairRate: 'repair rate', buildSpeed: 'build speed',
+  pickupRadius: 'pickup radius',
+};
+
 /** Human-readable one-liner for a delta, used on cards and achievement rows. */
 export function describePerk(delta: PerkDelta): string {
   const parts: string[] = [];
   const pct = (v: number) => `${v > 1 ? '+' : ''}${Math.round((v - 1) * 100)}%`;
-  const label: Record<string, string> = {
-    turretDamage: 'turret damage', turretFireRate: 'turret fire rate', turretRange: 'turret range',
-    playerDamage: 'weapon damage', playerFireRate: 'weapon fire rate', playerMaxHp: 'max health',
-    playerSpeed: 'move speed', miningSpeed: 'mining speed', oreYield: 'ore yield',
-    essenceYield: 'essence yield', buildCost: 'build cost', sellRefund: 'sell refund',
-    extractorRate: 'extractor rate', structureHp: 'structure HP', coreHp: 'core HP',
-    powerOutput: 'power output', repairRate: 'repair rate', buildSpeed: 'build speed',
-    pickupRadius: 'pickup radius',
-  };
   for (const k of Object.keys(delta) as (keyof Perks)[]) {
     const v = delta[k]!;
-    if (k === 'startOre') parts.push(`+${v} starting ore`);
-    else if (k === 'startEssence') parts.push(`+${v} starting essence`);
-    else if (k === 'playerRegen') parts.push(`+${v}/s health regen`);
-    else if (k === 'coreRegen') parts.push(`+${v}/s core regen`);
-    else if (k === 'revives') parts.push(`${v} core save${v > 1 ? 's' : ''}`);
-    else if (k === 'techChoices') parts.push(`+${v} tech option`);
-    else if (k === 'luck') parts.push(`+${Math.round(v * 100)}% bonus drops`);
-    else if (k === 'splashEcho') parts.push(`${Math.round(v * 100)}% splash echo`);
-    else if (k === 'armorShred') parts.push(`+${v} armour shred`);
-    else parts.push(`${pct(v)} ${label[k] ?? k}`);
+    if (k === 'startOre') parts.push(t('perk.startOre', '+{v} starting ore', { v }));
+    else if (k === 'startEssence') parts.push(t('perk.startEssence', '+{v} starting essence', { v }));
+    else if (k === 'playerRegen') parts.push(t('perk.playerRegen', '+{v}/s health regen', { v }));
+    else if (k === 'coreRegen') parts.push(t('perk.coreRegen', '+{v}/s core regen', { v }));
+    else if (k === 'revives') {
+      parts.push(v > 1
+        ? t('perk.revives.many', '{v} core saves', { v })
+        : t('perk.revives.one', '{v} core save', { v }));
+    }
+    else if (k === 'techChoices') parts.push(t('perk.techChoices', '+{v} tech option', { v }));
+    else if (k === 'luck') parts.push(t('perk.luck', '+{v}% bonus drops', { v: Math.round(v * 100) }));
+    else if (k === 'splashEcho') parts.push(t('perk.splashEcho', '{v}% splash echo', { v: Math.round(v * 100) }));
+    else if (k === 'armorShred') parts.push(t('perk.armorShred', '+{v} armour shred', { v }));
+    else {
+      const key = k as string;
+      const label = t(`perk.field.${key}`, FIELD_LABEL[key] ?? key);
+      parts.push(t('perk.multiplier', '{pct} {label}', { pct: pct(v), label }));
+    }
   }
   return parts.join(', ');
 }

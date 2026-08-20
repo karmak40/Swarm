@@ -1,5 +1,6 @@
 import type { BuildingKind } from './buildings';
 import type { PerkDelta } from './perks';
+import { t } from '../core/i18n';
 
 /**
  * Run-scoped roguelite draft. Offered after every third wave and after each
@@ -112,3 +113,13 @@ export const TECH_CARDS: TechCard[] = [
 ];
 
 export const RARITY_WEIGHT: Record<Rarity, number> = { common: 62, rare: 29, epic: 9 };
+
+/** Localised display name. English text above is the source of truth and fallback. */
+export function techName(card: TechCard): string {
+  return t(`tech.${card.id}.name`, card.name);
+}
+
+/** Localised effect description shown on the draft card. */
+export function techDesc(card: TechCard): string {
+  return t(`tech.${card.id}.desc`, card.desc);
+}

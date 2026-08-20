@@ -1,3 +1,5 @@
+import { t } from '../core/i18n';
+
 /**
  * Enemy archetypes.
  *
@@ -181,3 +183,13 @@ export const ENEMIES: Record<string, EnemyDef> = {
 };
 
 export const BOSS_IDS = ['tyrant', 'devourer', 'matriarch', 'worldeater'] as const;
+
+/** Localised display name. English text above is the source of truth and fallback. */
+export function enemyName(def: EnemyDef): string {
+  return t(`enemy.${def.id}.name`, def.name);
+}
+
+/** Localised bestiary/telemetry blurb, when the archetype has one. */
+export function enemyDesc(def: EnemyDef): string | undefined {
+  return def.description === undefined ? undefined : t(`enemy.${def.id}.desc`, def.description);
+}

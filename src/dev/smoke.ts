@@ -1428,6 +1428,239 @@ function testTouchLayout() {
     !t.down('ShiftLeft') && !t.stick.active && !t.mapHeld && t.axis().x === 0);
 }
 
+/** Reactors, so a power-drawing structure under test is not browned out. */
+function powerUp(game: Game, count = 2) {
+  const place = (game as unknown as { place: Placer }).place.bind(game);
+  const w = game.world;
+  let n = 0;
+  for (let ring = 5; ring <= 14 && n < count; ring++) {
+    for (let i = 0; i < 34 && n < count; i++) {
+      const a = (i / 34) * Math.PI * 2 + 0.7;
+      const tx = Math.round(w.coreTx + Math.cos(a) * ring);
+      const ty = Math.round(w.coreTy + Math.sin(a) * ring);
+      if (game.canPlace(BUILDINGS.generator, tx, ty) !== null) continue;
+      place(BUILDINGS.generator, tx, ty);
+      n++;
+    }
+  }
+  return n;
+}
+
+/** Places a Drone Bay somewhere legal and returns it. */
+function placeBay(game: Game): ReturnType<typeof game.buildings.at> {
+  const place = (game as unknown as { place: Placer }).place.bind(game);
+  const w = game.world;
+  for (let ring = 4; ring <= 12; ring++) {
+    for (let i = 0; i < 36; i++) {
+      const a = (i / 36) * Math.PI * 2;
+      const tx = Math.round(w.coreTx + Math.cos(a) * ring);
+      const ty = Math.round(w.coreTy + Math.sin(a) * ring);
+      if (game.canPlace(BUILDINGS.dronebay, tx, ty) !== null) continue;
+      place(BUILDINGS.dronebay, tx, ty);
+      return game.buildings.at(-1);
+    }
+  }
+  return undefined;
+}
+
+function testDroneBay() {
+  console.log('\n▸ drone bay');
+  const game = new Game();
+  game.startLevel(1, undefined, FIXED_SEED);
+  game.frozen = false;
+  game.ore = 9999;
+  game.essence = 9999;
+  const input = idleInput();
+
+  check('drone bay is in the build roster', game.availableBuildings.includes('dronebay'));
+  check('reactors placed', powerUp(game) > 0);
+  const bay = placeBay(game);
+  check('drone bay is placeable', !!bay);
+  if (!bay) return;
+
+  check('no drones before the bay finishes', game.drones.length === 0);
+
+  // Construction, then the bay should staff itself.
+  for (let i = 0; i < 60 * 4; i++) game.update(DT, input);
+  check('bay finished building', bay.built);
+  const slots = BUILDINGS.dronebay.droneSlots!;
+
+  const count = game.droneCount(bay);
+  check('a finished bay launches its full complement at once',
+    count.live === slots, `${count.live}/${count.slots}`);
+  check('grid is not browned out', game.power.efficiency >= 1,
+    `${game.power.draw}/${game.power.supply}`);
+  check('drones belong to their bay', game.drones.every((d) => d.bayId === bay.id));
+
+  // --- the haul loop actually delivers ---
+  const oreBefore = game.ore;
+  const minedBefore = game.runStats.droneOre;
+  const secondsMeasured = 60;
+  let sawMining = false;
+  let sawCargo = false;
+  let sawReturn = false;
+  for (let i = 0; i < 60 * 60; i++) {
+    game.update(DT, input);
+    for (const d of game.drones) {
+      if (d.state === 'mining') sawMining = true;
+      if (d.cargo > 0) sawCargo = true;
+      if (d.state === 'toBay') sawReturn = true;
+    }
+  }
+  check('drones fly out and mine', sawMining);
+  check('drones fill their hold', sawCargo);
+  check('drones haul back to the bay', sawReturn);
+  check('hauling credits ore', game.ore > oreBefore, `${Math.round(oreBefore)} → ${Math.round(game.ore)}`);
+  check('drone ore is tracked separately', game.runStats.droneOre > minedBefore,
+    `${Math.round(game.runStats.droneOre)}`);
+
+  // Throughput must land between an extractor and doing it yourself: fast enough
+  // to be worth 145 ore, slow enough not to replace going out in person.
+  const perSecond = (game.runStats.droneOre - minedBefore) / secondsMeasured;
+  check('drone throughput is in the intended band', perSecond > 1 && perSecond < 12,
+    `${perSecond.toFixed(2)} ore/s from ${slots} drones`);
+
+  // --- seams are consumed, and re-targeted when they run dry ---
+  const drained = game.world.nodes.filter((n) => n.amount < n.max).length;
+  check('drones deplete seams', drained > 0, `${drained} seams touched`);
+
+  // A flight must spread across seams, not stack on the single nearest one:
+  // otherwise they fly in lockstep and one blast takes out the whole bay.
+  const assignments = new Map<number, number>();
+  for (const d of game.drones) {
+    if (d.nodeIndex < 0) continue;
+    assignments.set(d.nodeIndex, (assignments.get(d.nodeIndex) ?? 0) + 1);
+  }
+  const worked = [...assignments.keys()].length;
+  check('drones spread across separate seams', worked > 1 || game.drones.length < 2,
+    `${game.drones.length} drones over ${worked} seams`);
+  check('no seam is swamped by the whole flight',
+    [...assignments.values()].every((v) => v < slots) || slots < 2,
+    [...assignments.values()].join(','));
+
+  // A seam an extractor owns must be left alone.
+  const g2 = new Game();
+  g2.startLevel(1, undefined, FIXED_SEED);
+  g2.frozen = false;
+  g2.ore = 9999; g2.essence = 9999;
+  const place2 = (g2 as unknown as { place: Placer }).place.bind(g2);
+  const seam = g2.world.nodes[0];
+  if (g2.canPlace(BUILDINGS.extractor, seam.tx, seam.ty) === null) {
+    place2(BUILDINGS.extractor, seam.tx, seam.ty);
+    check('extractor claimed its seam', seam.claimedBy >= 0);
+    const b2 = placeBay(g2);
+    if (b2) {
+      for (let i = 0; i < 60 * 30; i++) g2.update(DT, input);
+      const targeting = g2.drones.filter((d) => d.nodeIndex === 0).length;
+      check('drones skip extractor-owned seams', targeting === 0, `${targeting} drones on it`);
+    }
+  }
+}
+
+function testDroneVulnerability() {
+  console.log('\n▸ drone vulnerability');
+  const game = new Game();
+  game.startLevel(1, undefined, FIXED_SEED);
+  game.frozen = false;
+  game.ore = 9999;
+  game.essence = 9999;
+  const input = idleInput();
+  powerUp(game);
+  const bay = placeBay(game);
+  if (!bay) { check('bay placed for the vulnerability test', false); return; }
+  for (let i = 0; i < 60 * 4; i++) game.update(DT, input);
+  game.fillDroneBays();
+  const slots = game.droneCount(bay).slots;
+  check('bays can be filled outright', game.droneCount(bay).live === slots);
+
+  // Hive area damage must reach drones, or automation is risk-free. Kept
+  // deliberately non-lethal so the rest of the flight survives for later checks.
+  const d = game.drones[0];
+  const hp0 = d.hp;
+  game.explode(d.x, d.y, 120, 12, 'hive');
+  check('hive splash damages drones', d.hp < hp0, `${hp0} → ${Math.round(d.hp)}`);
+  check('a glancing blast is survivable', !d.dead);
+
+  // Player splash must not touch them at all.
+  const other = game.drones.find((x) => !x.dead && x !== d);
+  check('a second drone is available', !!other);
+  if (other) {
+    const hp1 = other.hp;
+    game.explode(other.x, other.y, 120, 500, 'player');
+    check('player splash spares drones', other.hp === hp1, `${hp1} → ${other.hp}`);
+  }
+
+  // A lethal hit removes it and costs a slot until the timer elapses.
+  const before = game.droneCount(bay).live;
+  const victim = game.drones.find((x) => !x.dead);
+  check('a drone is alive to kill', !!victim);
+  if (!victim) return;
+  game.damageDrone(victim, victim.maxHp * 5);
+  game.update(DT, input);
+  check('a killed drone is removed', game.droneCount(bay).live === before - 1,
+    `${game.droneCount(bay).live}`);
+  check('the loss is recorded', game.runStats.dronesLost > 0);
+
+  // ...and is replaced, but only after the respawn delay.
+  const respawn = BUILDINGS.dronebay.droneRespawn!;
+  for (let i = 0; i < 60 * (respawn - 3); i++) game.update(DT, input);
+  check('replacement is not instant', game.droneCount(bay).live < slots,
+    `${game.droneCount(bay).live}/${slots}`);
+  for (let i = 0; i < 60 * 8; i++) game.update(DT, input);
+  check('the bay rebuilds the loss', game.droneCount(bay).live === slots,
+    `${game.droneCount(bay).live}/${slots}`);
+
+  // Losing the bay takes the whole flight with it.
+  const live = game.droneCount(bay).live;
+  check('drones were airborne before the bay fell', live > 0);
+  game.damageBuilding(bay, bay.maxHp * 5);
+  game.update(DT, input);
+  check('losing the bay grounds every drone', game.drones.length === 0,
+    `${game.drones.length} left`);
+}
+
+function testDroneSnapshot() {
+  console.log('\n▸ drones across a save');
+  clearRun();
+  const game = new Game();
+  game.startLevel(1, undefined, FIXED_SEED);
+  game.frozen = false;
+  game.ore = 9999;
+  game.essence = 9999;
+  const input = idleInput();
+  powerUp(game);
+  const bay = placeBay(game);
+  if (!bay) { check('bay placed for the snapshot test', false); return; }
+  for (let i = 0; i < 60 * 4; i++) game.update(DT, input);
+  game.fillDroneBays();
+
+  check('reached a build phase', game.inBuildPhase, game.phase);
+  check('snapshot written', game.autoSaveRun());
+  const snap = Game.loadSnapshot()!;
+  check('the bay is in the snapshot',
+    snap.buildings.some((b) => b.k === 'dronebay'));
+
+  const resumed = new Game();
+  check('resume succeeds with a bay', resumed.resume(snap));
+  const rbay = resumed.buildings.find((b) => b.kind === 'dronebay');
+  check('the bay came back', !!rbay);
+  if (!rbay) return;
+  // Drones are transient and not serialised; the bay must restaff immediately
+  // rather than making the player wait out timers for something saving cost them.
+  check('drones are restored at once, not on a timer',
+    resumed.droneCount(rbay).live === resumed.droneCount(rbay).slots,
+    `${resumed.droneCount(rbay).live}/${resumed.droneCount(rbay).slots}`);
+  check('restored drones are bound to the restored bay',
+    resumed.drones.every((d) => d.bayId === rbay.id));
+
+  resumed.frozen = false;
+  const oreBefore = resumed.ore;
+  for (let i = 0; i < 60 * 45; i++) resumed.update(DT, input);
+  check('restored drones go back to work', resumed.ore > oreBefore,
+    `${Math.round(oreBefore)} → ${Math.round(resumed.ore)}`);
+  clearRun();
+}
+
 function testDefeat() {
   console.log('\n▸ defeat path');
   const game = new Game();
@@ -1535,6 +1768,9 @@ testAutoAim();
 testTouchActions();
 testQualityTiers();
 testTouchLayout();
+testDroneBay();
+testDroneVulnerability();
+testDroneSnapshot();
 testEndlessMode();
 testRunSnapshot();
 testEarlyWaveStart();

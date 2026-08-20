@@ -50,6 +50,8 @@ export interface SaveData {
     /** Left-handed layout: mirrors the touch controls. */
     southpaw: boolean;
     haptics: boolean;
+    /** 'auto' follows the browser's language; the rest force one. */
+    locale: 'auto' | 'en' | 'ru' | 'de' | 'es' | 'fr';
   };
 }
 
@@ -77,6 +79,7 @@ export function emptySave(): SaveData {
       controls: 'auto', quality: 'auto',
       autoAim: false, autoMine: false,
       uiScale: 1, southpaw: false, haptics: true,
+      locale: 'auto',
     },
   };
 }

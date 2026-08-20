@@ -1,6 +1,8 @@
 import { clamp, fmtNum, fmtTime, TAU } from '../core/math';
-import { BUILDINGS, type BuildingKind } from '../data/buildings';
-import { ENEMIES } from '../data/enemies';
+import { t as tr } from '../core/i18n';
+import { BUILDINGS, buildingName, buildingDesc, type BuildingKind, type TargetingMode } from '../data/buildings';
+import { ENEMIES, enemyName } from '../data/enemies';
+import { levelName, levelSubtitle } from '../data/levels';
 import { Tile, TILE } from '../game/world';
 import type { Game } from '../game/game';
 import { css, rgba } from './palette';
@@ -10,6 +12,16 @@ type Ctx = CanvasRenderingContext2D;
 
 const UI_FONT = "'Bahnschrift', 'DIN Alternate', 'Segoe UI', system-ui, sans-serif";
 const MONO = "'Cascadia Mono', Consolas, monospace";
+
+/** Localised label for a turret's target-priority mode, shown in the hover tooltip. */
+function targetingLabel(mode: TargetingMode): string {
+  switch (mode) {
+    case 'first': return tr('hud.targeting.first', 'FIRST');
+    case 'closest': return tr('hud.targeting.closest', 'CLOSEST');
+    case 'strongest': return tr('hud.targeting.strongest', 'STRONGEST');
+    case 'weakest': return tr('hud.targeting.weakest', 'WEAKEST');
+  }
+}
 
 /**
  * Diegetic HUD drawn straight onto the canvas: resource strip, wave tracker,
@@ -105,7 +117,7 @@ export class Hud {
     }
     ctx.font = `600 ${Math.round(8 * s)}px ${UI_FONT}`;
     ctx.fillStyle = css(0x55667e);
-    ctx.fillText('CORE', pad + barW + Math.round(6 * s), row2 - barH / 2);
+    ctx.fillText(tr('hud.compact.coreLabel', 'CORE'), pad + barW + Math.round(6 * s), row2 - barH / 2);
 
     const p = game.player;
     const px = pad + barW + Math.round(44 * s);
@@ -125,7 +137,7 @@ export class Hud {
       ctx.textAlign = 'left';
       ctx.font = `600 ${Math.round(9 * s)}px ${UI_FONT}`;
       ctx.fillStyle = css(0xff8090);
-      ctx.fillText('◎ LOCKED', px + barW * 0.7 + Math.round(8 * s), row2 - barH / 2);
+      ctx.fillText(tr('hud.compact.locked', '◎ LOCKED'), px + barW * 0.7 + Math.round(8 * s), row2 - barH / 2);
     }
 
     // Clock, tucked left of the pause button.
@@ -153,29 +165,29 @@ export class Hud {
     ctx.stroke();
 
     let x = 24;
-    x = this.resource(ctx, x, H / 2, '◆', 'ORE', fmtNum(game.ore), 0x7fd9ff);
-    x = this.resource(ctx, x, H / 2, '✦', 'ESSENCE', fmtNum(game.essence), 0xb47cff);
+    x = this.resource(ctx, x, H / 2, '◆', tr('hud.resources.ore', 'ORE'), fmtNum(game.ore), 0x7fd9ff);
+    x = this.resource(ctx, x, H / 2, '✦', tr('hud.resources.essence', 'ESSENCE'), fmtNum(game.essence), 0xb47cff);
 
     // Power gauge, with a brownout warning.
     const pw = game.power;
     const eff = pw.efficiency;
     const powCol = eff >= 1 ? 0x5cf2a0 : eff > 0.6 ? 0xffb347 : 0xff4f5e;
-    x = this.resource(ctx, x, H / 2, '⚡', 'POWER', `${Math.round(pw.draw)}/${Math.round(pw.supply)}`, powCol);
+    x = this.resource(ctx, x, H / 2, '⚡', tr('hud.resources.power', 'POWER'), `${Math.round(pw.draw)}/${Math.round(pw.supply)}`, powCol);
     if (eff < 1) {
       ctx.font = `600 10px ${UI_FONT}`;
       ctx.fillStyle = css(0xff4f5e);
       ctx.textAlign = 'left';
-      ctx.fillText(`BROWNOUT −${Math.round((1 - eff) * 100)}%`, x - 8, H / 2 + 15);
+      ctx.fillText(tr('hud.topBar.brownout', 'BROWNOUT −{pct}%', { pct: Math.round((1 - eff) * 100) }), x - 8, H / 2 + 15);
     }
 
     // Level name, centred.
     ctx.textAlign = 'center';
     ctx.font = `600 15px ${UI_FONT}`;
     ctx.fillStyle = css(0xe7f0ff);
-    ctx.fillText(game.level.name.toUpperCase(), w / 2, 18);
+    ctx.fillText(levelName(game.level).toUpperCase(), w / 2, 18);
     ctx.font = `400 10px ${UI_FONT}`;
     ctx.fillStyle = css(0x8fa3c0);
-    ctx.fillText(game.level.subtitle.toUpperCase(), w / 2, 35);
+    ctx.fillText(levelSubtitle(game.level).toUpperCase(), w / 2, 35);
 
     // Clock + achievement counter on the right.
     ctx.textAlign = 'right';
@@ -210,7 +222,7 @@ export class Hud {
     const bw = this.compact ? Math.min(w * 0.42, 260 * s) : 360;
 
     const isPrep = game.inBuildPhase;
-    const label = isPrep ? 'NEXT ASSAULT' : game.waveLabel;
+    const label = isPrep ? tr('hud.wave.nextAssault', 'NEXT ASSAULT') : game.waveLabel;
     const boss = game.phase === 'boss' || game.plan?.isBoss;
 
     ctx.textAlign = 'center';
@@ -272,7 +284,10 @@ export class Hud {
     ctx.font = `500 11px ${UI_FONT}`;
     ctx.fillStyle = css(0x8fa3c0);
     if (isPrep) {
-      ctx.fillText(`${Math.ceil(game.prepRemaining)}s   ·   SPACE to start early for bonus ore`, cx, pipY + 18);
+      ctx.fillText(
+        tr('hud.wave.prepCountdown', '{s}s   ·   SPACE to start early for bonus ore', { s: Math.ceil(game.prepRemaining) }),
+        cx, pipY + 18,
+      );
       const next = game.nextPlan;
       if (next) {
         ctx.font = `500 10px ${UI_FONT}`;
@@ -280,7 +295,7 @@ export class Hud {
         ctx.fillText(game.describeWave(next).toUpperCase(), cx, pipY + 34);
       }
     } else {
-      ctx.fillText(`${game.remainingEnemies} HOSTILES REMAINING`, cx, pipY + 18);
+      ctx.fillText(tr('hud.wave.hostilesRemaining', '{n} HOSTILES REMAINING', { n: game.remainingEnemies }), cx, pipY + 18);
     }
 
     if (game.endless) {
@@ -288,7 +303,9 @@ export class Hud {
       ctx.font = `600 10px ${UI_FONT}`;
       ctx.fillStyle = css(left === 0 ? 0xff4f5e : 0xffcc55);
       ctx.fillText(
-        left === 0 ? 'BOSS WAVE' : `BOSS IN ${left} WAVE${left === 1 ? '' : 'S'}`,
+        left === 0
+          ? tr('hud.wave.bossWave', 'BOSS WAVE')
+          : tr('hud.wave.bossIn', 'BOSS IN {n} WAVE{s}', { n: left, s: left === 1 ? '' : 'S' }),
         cx, pipY + (isPrep ? 50 : 34),
       );
     }
@@ -341,7 +358,7 @@ export class Hud {
       ctx.font = `600 ${Math.max(7, Math.round(9 * scale))}px ${UI_FONT}`;
       ctx.fillStyle = css(0x8fa3c0);
       const nameCap = Math.max(6, Math.round(11 * scale));
-      ctx.fillText(def.name.toUpperCase().slice(0, nameCap), x + slot / 2, y0 + slot * 0.66);
+      ctx.fillText(buildingName(def).toUpperCase().slice(0, nameCap), x + slot / 2, y0 + slot * 0.66);
 
       ctx.font = `600 ${Math.max(8, Math.round(10 * scale))}px ${MONO}`;
       ctx.fillStyle = css(game.ore >= cost.ore ? 0x7fd9ff : 0xff4f5e);
@@ -376,9 +393,9 @@ export class Hud {
     ctx.textAlign = 'center';
     ctx.font = `500 10px ${UI_FONT}`;
     ctx.fillStyle = css(0x55667e);
-    const mode = game.cursorMode === 'sell' ? 'SELL MODE — click a structure   ·   Q to exit'
-      : game.cursorMode === 'build' ? 'LMB place   ·   RMB cancel   ·   E repair   ·   T targeting'
-      : 'WASD move   ·   LMB fire   ·   RMB mine   ·   SHIFT dash   ·   Q sell   ·   E repair   ·   TAB stats';
+    const mode = game.cursorMode === 'sell' ? tr('hud.buildBar.legendSell', 'SELL MODE — click a structure   ·   Q to exit')
+      : game.cursorMode === 'build' ? tr('hud.buildBar.legendBuild', 'LMB place   ·   RMB cancel   ·   E repair   ·   T targeting')
+      : tr('hud.buildBar.legendNormal', 'WASD move   ·   LMB fire   ·   RMB mine   ·   SHIFT dash   ·   Q sell   ·   E repair   ·   TAB stats');
     ctx.fillText(mode, w / 2, h - 12);
   }
 
@@ -500,7 +517,7 @@ export class Hud {
     ctx.textAlign = 'left';
     ctx.font = `500 9px ${UI_FONT}`;
     ctx.fillStyle = css(0x55667e);
-    ctx.fillText('CORE INTEGRITY', x, y);
+    ctx.fillText(tr('hud.rail.coreIntegrity', 'CORE INTEGRITY'), x, y);
     y += 12;
     const bw = 178;
     ctx.fillStyle = rgba(0x000000, 0.6);
@@ -524,7 +541,7 @@ export class Hud {
     const p = game.player;
     ctx.font = `500 9px ${UI_FONT}`;
     ctx.fillStyle = css(0x55667e);
-    ctx.fillText('CHASSIS', x, y);
+    ctx.fillText(tr('hud.rail.chassis', 'CHASSIS'), x, y);
     y += 12;
     ctx.fillStyle = rgba(0x000000, 0.6);
     ctx.fillRect(x, y, bw, 9);
@@ -537,7 +554,7 @@ export class Hud {
     // Heat.
     ctx.font = `500 9px ${UI_FONT}`;
     ctx.fillStyle = css(p.overheated ? 0xff4f5e : 0x55667e);
-    ctx.fillText(p.overheated ? 'WEAPON OVERHEATED' : 'HEAT', x, y);
+    ctx.fillText(p.overheated ? tr('hud.rail.overheated', 'WEAPON OVERHEATED') : tr('hud.rail.heat', 'HEAT'), x, y);
     y += 10;
     ctx.fillStyle = rgba(0x000000, 0.6);
     ctx.fillRect(x, y, bw, 5);
@@ -549,7 +566,7 @@ export class Hud {
     const dashReady = p.dashCooldown <= 0;
     ctx.font = `500 9px ${UI_FONT}`;
     ctx.fillStyle = css(dashReady ? 0x5cf2a0 : 0x55667e);
-    ctx.fillText(dashReady ? 'DASH READY  [SHIFT]' : 'DASH RECHARGING', x, y);
+    ctx.fillText(dashReady ? tr('hud.rail.dashReady', 'DASH READY  [SHIFT]') : tr('hud.rail.dashRecharging', 'DASH RECHARGING'), x, y);
     y += 10;
     ctx.fillStyle = rgba(0x000000, 0.6);
     ctx.fillRect(x, y, bw, 4);
@@ -561,7 +578,7 @@ export class Hud {
     if (game.techTaken.length) {
       ctx.font = `500 9px ${UI_FONT}`;
       ctx.fillStyle = css(0x55667e);
-      ctx.fillText(`TECH  ×${game.techTaken.length}`, x, y);
+      ctx.fillText(tr('hud.rail.techCount', 'TECH  ×{n}', { n: game.techTaken.length }), x, y);
     }
   }
 
@@ -576,7 +593,7 @@ export class Hud {
     ctx.textAlign = 'center';
     ctx.font = `700 20px ${UI_FONT}`;
     ctx.fillStyle = css(0xff4f5e);
-    ctx.fillText(e.def.name, w / 2, y - 14);
+    ctx.fillText(enemyName(e.def), w / 2, y - 14);
 
     ctx.fillStyle = rgba(0x000000, 0.72);
     techRect(ctx, x, y, bw, 16, 6);
@@ -619,7 +636,7 @@ export class Hud {
       const ab = e.def.abilities![e.castingIndex];
       ctx.font = `600 11px ${UI_FONT}`;
       ctx.fillStyle = css(0xffb347);
-      ctx.fillText(`⚠  ${ab.id.toUpperCase()} INCOMING`, w / 2, y + 30);
+      ctx.fillText(tr('hud.boss.abilityIncoming', '⚠  {ability} INCOMING', { ability: ab.id.toUpperCase() }), w / 2, y + 30);
     }
   }
 
@@ -632,54 +649,66 @@ export class Hud {
     if (game.cursorMode === 'build' && game.buildKind) {
       const d = BUILDINGS[game.buildKind];
       const cost = game.costOf(d);
-      title = d.name;
-      lines = [d.desc];
-      const stats: string[] = [`${cost.ore} ore` + (cost.essence ? ` · ${cost.essence} essence` : '')];
-      if (d.power) stats.push(d.power < 0 ? `+${-d.power} power` : `${d.power} power draw`);
-      if (d.damage) stats.push(`${Math.round(d.damage * game.perks.turretDamage)} dmg`);
-      if (d.fireRate) stats.push(`${(d.fireRate * game.perks.turretFireRate).toFixed(1)}/s`);
-      if (d.range) stats.push(`${Math.round(d.range * game.perks.turretRange)} range`);
-      if (d.splash) stats.push(`${d.splash} splash`);
-      if (d.chains) stats.push(`${d.chains} chain`);
-      if (d.beam) stats.push(d.pierce && d.pierce > 1 ? `beam · pierces ${d.pierce}` : 'beam · never misses');
-      if (d.homing) stats.push('guided');
-      if (d.armorPierce === 999) stats.push('ignores armour');
-      else if (d.armorPierce) stats.push(`${d.armorPierce} armour pierce`);
-      if (d.burst && d.burst > 1) stats.push(`${d.burst}-round burst`);
-      if (d.minRange) stats.push(`min range ${d.minRange}`);
-      if (d.antiAir) stats.push('anti-air');
-      if (d.groundOnly) stats.push('ground only');
+      title = buildingName(d);
+      lines = [buildingDesc(d)];
+      const stats: string[] = [cost.essence
+        ? tr('hud.tooltip.costOreEssence', '{ore} ore · {essence} essence', { ore: cost.ore, essence: cost.essence })
+        : tr('hud.tooltip.costOre', '{ore} ore', { ore: cost.ore })];
+      if (d.power) stats.push(d.power < 0
+        ? tr('hud.tooltip.powerSupply', '+{n} power', { n: -d.power })
+        : tr('hud.tooltip.powerDraw', '{n} power draw', { n: d.power }));
+      if (d.damage) stats.push(tr('hud.tooltip.dmg', '{n} dmg', { n: Math.round(d.damage * game.perks.turretDamage) }));
+      if (d.fireRate) stats.push(tr('hud.tooltip.fireRate', '{n}/s', { n: (d.fireRate * game.perks.turretFireRate).toFixed(1) }));
+      if (d.range) stats.push(tr('hud.tooltip.range', '{n} range', { n: Math.round(d.range * game.perks.turretRange) }));
+      if (d.splash) stats.push(tr('hud.tooltip.splash', '{n} splash', { n: d.splash }));
+      if (d.chains) stats.push(tr('hud.tooltip.chains', '{n} chain', { n: d.chains }));
+      if (d.beam) stats.push(d.pierce && d.pierce > 1
+        ? tr('hud.tooltip.beamPierces', 'beam · pierces {n}', { n: d.pierce })
+        : tr('hud.tooltip.beamNeverMisses', 'beam · never misses'));
+      if (d.homing) stats.push(tr('hud.tooltip.guided', 'guided'));
+      if (d.armorPierce === 999) stats.push(tr('hud.tooltip.ignoresArmour', 'ignores armour'));
+      else if (d.armorPierce) stats.push(tr('hud.tooltip.armourPierce', '{n} armour pierce', { n: d.armorPierce }));
+      if (d.burst && d.burst > 1) stats.push(tr('hud.tooltip.burst', '{n}-round burst', { n: d.burst }));
+      if (d.minRange) stats.push(tr('hud.tooltip.minRange', 'min range {n}', { n: d.minRange }));
+      if (d.antiAir) stats.push(tr('hud.tooltip.antiAir', 'anti-air'));
+      if (d.groundOnly) stats.push(tr('hud.tooltip.groundOnly', 'ground only'));
       if (d.droneSlots) {
-        stats.push(`${d.droneSlots} drones`);
-        stats.push(`${(d.droneMineRate! * game.perks.extractorRate).toFixed(1)}/s each`);
-        stats.push(`${d.droneCargo} cargo`);
+        stats.push(tr('hud.tooltip.droneSlots', '{n} drones', { n: d.droneSlots }));
+        stats.push(tr('hud.tooltip.droneRate', '{n}/s each', { n: (d.droneMineRate! * game.perks.extractorRate).toFixed(1) }));
+        stats.push(tr('hud.tooltip.droneCargo', '{n} cargo', { n: d.droneCargo ?? 0 }));
       }
-      stats.push(`${Math.round(d.hp * game.perks.structureHp)} hp`);
+      stats.push(tr('hud.tooltip.hp', '{n} hp', { n: Math.round(d.hp * game.perks.structureHp) }));
       lines.push(stats.join('   ·   '));
       if (!game.buildValid && game.lastError.life > 0) lines.push(`⚠ ${game.lastError.text}`);
     } else if (game.hoverBuilding) {
       const b = game.hoverBuilding;
-      title = b.def.name;
-      lines = [`${Math.ceil(b.hp)} / ${b.maxHp} HP` + (b.shield > 0 ? `  ·  ${Math.ceil(b.shield)} shield` : '')];
+      title = buildingName(b.def);
+      lines = [tr('hud.tooltip.hpShort', '{cur} / {max} HP', { cur: Math.ceil(b.hp), max: b.maxHp })
+        + (b.shield > 0 ? tr('hud.tooltip.shieldInline', '  ·  {n} shield', { n: Math.ceil(b.shield) }) : '')];
       if (b.isTurret) {
-        lines.push(`Targeting: ${b.targeting.toUpperCase()}  (T to cycle)  ·  ${b.kills} kills`);
+        lines.push(tr('hud.tooltip.targeting', 'Targeting: {mode}  (T to cycle)  ·  {kills} kills',
+          { mode: targetingLabel(b.targeting), kills: b.kills }));
       }
       if (b.def.droneSlots !== undefined) {
         const { live, slots } = game.droneCount(b);
-        lines.push(`Drones: ${live} / ${slots}` +
-          (live < slots ? `  ·  rebuilding in ${Math.ceil(b.droneCooldown)}s` : '  ·  full complement'));
+        lines.push(tr('hud.tooltip.drones', 'Drones: {live} / {slots}', { live, slots })
+          + (live < slots
+            ? tr('hud.tooltip.dronesRebuilding', '  ·  rebuilding in {s}s', { s: Math.ceil(b.droneCooldown) })
+            : tr('hud.tooltip.dronesFull', '  ·  full complement')));
       }
       if (b.def.power > 0 && b.efficiency < 1) {
-        lines.push(`⚠ Underpowered — firing at ${Math.round(b.efficiency * 100)}%`);
+        lines.push(tr('hud.tooltip.underpowered', '⚠ Underpowered — firing at {pct}%', { pct: Math.round(b.efficiency * 100) }));
       }
-      if (!b.built) lines.push(`Constructing… ${Math.round(b.progress * 100)}%`);
-      lines.push('E to repair  ·  Q then click to sell');
+      if (!b.built) lines.push(tr('hud.tooltip.constructing', 'Constructing… {pct}%', { pct: Math.round(b.progress * 100) }));
+      lines.push(tr('hud.tooltip.repairSell', 'E to repair  ·  Q then click to sell'));
     } else if (game.hoverNode) {
       const n = game.hoverNode;
-      title = n.rich ? 'Rich Ore Seam' : 'Ore Seam';
+      title = n.rich ? tr('hud.tooltip.richOreSeam', 'Rich Ore Seam') : tr('hud.tooltip.oreSeam', 'Ore Seam');
       lines = [
-        `${Math.ceil(n.amount)} / ${n.max} ore remaining`,
-        n.claimedBy >= 0 ? 'Extractor attached' : 'Hold RMB nearby to mine, or build an Extractor',
+        tr('hud.tooltip.oreRemaining', '{cur} / {max} ore remaining', { cur: Math.ceil(n.amount), max: n.max }),
+        n.claimedBy >= 0
+          ? tr('hud.tooltip.extractorAttached', 'Extractor attached')
+          : tr('hud.tooltip.mineHint', 'Hold RMB nearby to mine, or build an Extractor'),
       ];
     } else {
       return;
@@ -817,22 +846,23 @@ export class Hud {
     ctx.textAlign = 'left';
     ctx.font = `700 14px ${UI_FONT}`;
     ctx.fillStyle = css(0x46d8ff);
-    ctx.fillText('RUN TELEMETRY', x + pad, y + 26);
+    ctx.fillText(tr('hud.telemetry.title', 'RUN TELEMETRY'), x + pad, y + 26);
 
     const rows: [string, string][] = [
-      ['Wave', `${game.waveIndex + 1} / ${game.level.waves}`],
-      ['Kills', fmtNum(game.runStats.kills)],
-      ['Damage dealt', fmtNum(Math.round(game.runStats.damage))],
-      ['Ore mined', fmtNum(Math.round(game.runStats.oreMined))],
-      ['Essence', fmtNum(Math.round(game.runStats.essenceCollected))],
-      ['Structures built', String(game.runStats.built)],
-      ['Structures lost', String(game.runStats.structuresLost)],
-      ['Core damage taken', fmtNum(Math.round(game.runStats.coreDamage))],
-      ['Power draw / supply', `${Math.round(game.power.draw)} / ${Math.round(game.power.supply)}`],
-      ['Tech acquired', String(game.techTaken.length)],
-      ['Elapsed', fmtTime(game.runStats.timeSeconds)],
-      ['Entities', `${game.enemies.length}e ${game.buildings.length}b ${game.particles.count}p`],
-      ['FPS', String(Math.round(fps))],
+      [tr('hud.telemetry.wave', 'Wave'), `${game.waveIndex + 1} / ${game.level.waves}`],
+      [tr('hud.telemetry.kills', 'Kills'), fmtNum(game.runStats.kills)],
+      [tr('hud.telemetry.damageDealt', 'Damage dealt'), fmtNum(Math.round(game.runStats.damage))],
+      [tr('hud.telemetry.oreMined', 'Ore mined'), fmtNum(Math.round(game.runStats.oreMined))],
+      [tr('hud.telemetry.essence', 'Essence'), fmtNum(Math.round(game.runStats.essenceCollected))],
+      [tr('hud.telemetry.structuresBuilt', 'Structures built'), String(game.runStats.built)],
+      [tr('hud.telemetry.structuresLost', 'Structures lost'), String(game.runStats.structuresLost)],
+      [tr('hud.telemetry.coreDamageTaken', 'Core damage taken'), fmtNum(Math.round(game.runStats.coreDamage))],
+      [tr('hud.telemetry.powerDrawSupply', 'Power draw / supply'), `${Math.round(game.power.draw)} / ${Math.round(game.power.supply)}`],
+      [tr('hud.telemetry.techAcquired', 'Tech acquired'), String(game.techTaken.length)],
+      [tr('hud.telemetry.elapsed', 'Elapsed'), fmtTime(game.runStats.timeSeconds)],
+      [tr('hud.telemetry.entities', 'Entities'), tr('hud.telemetry.entitiesValue', '{e}e {b}b {p}p',
+        { e: game.enemies.length, b: game.buildings.length, p: game.particles.count })],
+      [tr('hud.telemetry.fps', 'FPS'), String(Math.round(fps))],
     ];
 
     ctx.font = `400 12px ${UI_FONT}`;
@@ -853,11 +883,15 @@ export class Hud {
     if (next) {
       ctx.font = `700 11px ${UI_FONT}`;
       ctx.fillStyle = css(0xffb347);
-      ctx.fillText('NEXT WAVE', x + pad, y + 326);
+      ctx.fillText(tr('hud.telemetry.nextWave', 'NEXT WAVE'), x + pad, y + 326);
       ctx.font = `400 11px ${UI_FONT}`;
       ctx.fillStyle = css(0x8fa3c0);
       next.composition.slice(0, 3).forEach((c, i) => {
-        ctx.fillText(`${c.count}× ${ENEMIES[c.id]?.name ?? c.id}`, x + pad, y + 346 + i * 15);
+        const enemyDef = ENEMIES[c.id];
+        ctx.fillText(
+          tr('hud.telemetry.waveComposition', '{count}× {name}', { count: c.count, name: enemyDef ? enemyName(enemyDef) : c.id }),
+          x + pad, y + 346 + i * 15,
+        );
       });
     }
   }

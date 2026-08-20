@@ -1,3 +1,5 @@
+import { t } from '../core/i18n';
+
 /**
  * Buildable structures.
  *
@@ -220,3 +222,13 @@ export const HOTKEY_CODES: Record<string, string> = {
 export const SELL_RATIO = 0.6;
 /** Repair cost per HP restored, in ore. */
 export const REPAIR_COST_PER_HP = 0.06;
+
+/** Localised display name. English text above is the source of truth and fallback. */
+export function buildingName(def: BuildingDef): string {
+  return t(`building.${def.id}.name`, def.name);
+}
+
+/** Localised flavour/description line, e.g. for the build-bar tooltip. */
+export function buildingDesc(def: BuildingDef): string {
+  return t(`building.${def.id}.desc`, def.desc);
+}

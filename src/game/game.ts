@@ -3,17 +3,19 @@ import type { InputSource } from '../core/input';
 import {
   Rng, TAU, angleDelta, clamp, damp, dist, dist2, lerp, rand, randInt, chance, rotateToward,
 } from '../core/math';
+// Aliased: this file's `t` is almost always a Tile value, not a translation call.
+import { t as tr } from '../core/i18n';
 import { PKind, Particles } from '../engine/particles';
 import { SpatialHash } from '../engine/spatial';
 import { FlowField } from '../engine/flowfield';
 import {
-  BUILDINGS, BUILD_ORDER, HOTKEY_CODES, REPAIR_COST_PER_HP, SELL_RATIO,
+  BUILDINGS, BUILD_ORDER, HOTKEY_CODES, REPAIR_COST_PER_HP, SELL_RATIO, buildingName,
   type BuildingDef, type BuildingKind, type TargetingMode,
 } from '../data/buildings';
-import { ENEMIES, type EnemyDef } from '../data/enemies';
-import { ENDLESS_BOSS_INTERVAL, LEVELS, type LevelDef } from '../data/levels';
+import { ENEMIES, enemyName, enemyDesc, type EnemyDef } from '../data/enemies';
+import { ENDLESS_BOSS_INTERVAL, LEVELS, levelName, levelSubtitle, type LevelDef } from '../data/levels';
 import { applyPerk, basePerks, type Perks } from '../data/perks';
-import { RARITY_WEIGHT, TECH_CARDS, type TechCard } from '../data/tech';
+import { RARITY_WEIGHT, TECH_CARDS, techName, techDesc, type TechCard } from '../data/tech';
 import {
   Building, Core, type DamageNumber, Drone, type Effect, Enemy, Pickup,
   type PickupKind, Player, Projectile,
@@ -273,8 +275,12 @@ export class Game {
     this.world.field.rebuild();
 
     this.setBanner(
-      this.mode === 'endless' ? 'ENDLESS · ' + this.level.name.toUpperCase() : this.level.name.toUpperCase(),
-      this.mode === 'endless' ? 'Survive as long as you can' : this.level.subtitle,
+      this.mode === 'endless'
+        ? tr('game.banner.endlessTitle', 'ENDLESS · {name}', { name: levelName(this.level).toUpperCase() })
+        : levelName(this.level).toUpperCase(),
+      this.mode === 'endless'
+        ? tr('game.banner.endlessSubtitle', 'Survive as long as you can')
+        : levelSubtitle(this.level),
       4.2, this.mode === 'endless' ? '#ffcc55' : '#46d8ff',
     );
     audio.startMusic(this.levelIndex * 2);
@@ -403,7 +409,10 @@ export class Game {
       const def = BUILDINGS[kind];
       const code = HOTKEY_CODES[def.hotkey];
       if (code && input.pressed(code)) {
-        if (!this.unlockedBuildings.has(kind)) { this.error(`${def.name} is not researched`); break; }
+        if (!this.unlockedBuildings.has(kind)) {
+          this.error(tr('game.error.notResearched', '{name} is not researched', { name: buildingName(def) }));
+          break;
+        }
         this.buildKind = this.buildKind === kind ? null : kind;
         this.cursorMode = this.buildKind ? 'build' : 'normal';
         audio.play('uiClick');
@@ -473,7 +482,12 @@ export class Game {
     if (!this.inBuildPhase || this.prepRemaining <= 2) return false;
     const bonus = Math.round(this.prepRemaining * 3);
     this.ore += bonus;
-    this.setBanner('EARLY ASSAULT', `+${bonus} ore for skipping ${Math.ceil(this.prepRemaining)}s`, 2.4, '#ffb347');
+    this.setBanner(
+      tr('game.banner.earlyAssault', 'EARLY ASSAULT'),
+      tr('game.banner.earlyAssaultDetail', '+{bonus} ore for skipping {seconds}s',
+        { bonus, seconds: Math.ceil(this.prepRemaining) }),
+      2.4, '#ffb347',
+    );
     this.prepRemaining = 0.6;
     audio.play('levelUp');
     return true;
@@ -496,7 +510,7 @@ export class Game {
     if (missing <= 0) return false;
     const heal = Math.min(missing, b.maxHp * 0.25);
     const cost = heal * REPAIR_COST_PER_HP;
-    if (this.ore < cost) { this.error('Not enough ore to repair'); return false; }
+    if (this.ore < cost) { this.error(tr('game.error.notEnoughOreRepair', 'Not enough ore to repair')); return false; }
     this.ore -= cost;
     b.hp += heal;
     this.buffers.repair += heal;
@@ -513,32 +527,40 @@ export class Game {
   /** Returns null when placement is legal, otherwise a player-facing reason. */
   canPlace(def: BuildingDef, tx: number, ty: number): string | null {
     const cost = this.costOf(def);
-    if (this.ore < cost.ore) return `Need ${cost.ore} ore`;
-    if (this.essence < cost.essence) return `Need ${cost.essence} essence`;
+    if (this.ore < cost.ore) return tr('game.place.needOre', 'Need {n} ore', { n: cost.ore });
+    if (this.essence < cost.essence) {
+      return tr('game.place.needEssence', 'Need {n} essence', { n: cost.essence });
+    }
 
     let coversNode = false;
     for (let y = ty; y < ty + def.size; y++) {
       for (let x = tx; x < tx + def.size; x++) {
-        if (!this.world.inBounds(x, y)) return 'Out of bounds';
-        if (this.world.isSolid(x, y)) return 'Solid rock';
-        if (this.buildingAt[this.world.idx(x, y)]) return 'Occupied';
-        const t = this.world.tileAt(x, y);
-        if (t === Tile.Ore || t === Tile.RichOre) coversNode = true;
+        if (!this.world.inBounds(x, y)) return tr('game.place.outOfBounds', 'Out of bounds');
+        if (this.world.isSolid(x, y)) return tr('game.place.solidRock', 'Solid rock');
+        if (this.buildingAt[this.world.idx(x, y)]) return tr('game.place.occupied', 'Occupied');
+        const tile = this.world.tileAt(x, y);
+        if (tile === Tile.Ore || tile === Tile.RichOre) coversNode = true;
       }
     }
 
     // Keep the core plaza clear.
     const cx = (tx + def.size / 2) * TILE, cy = (ty + def.size / 2) * TILE;
     if (dist(cx, cy, this.core.x, this.core.y) < this.core.radius + def.size * TILE * 0.5 + 4) {
-      return 'Too close to the core';
+      return tr('game.place.tooCloseCore', 'Too close to the core');
     }
     // Do not let players cap a spawn gate.
     for (const s of this.world.spawns) {
-      if (dist(cx, cy, s.x, s.y) < TILE * 3.2) return 'Too close to a hive gate';
+      if (dist(cx, cy, s.x, s.y) < TILE * 3.2) {
+        return tr('game.place.tooCloseGate', 'Too close to a hive gate');
+      }
     }
 
-    if (def.id === 'extractor' && !coversNode) return 'Must be placed on an ore seam';
-    if (def.id !== 'extractor' && coversNode) return 'Ore seam — only extractors fit here';
+    if (def.id === 'extractor' && !coversNode) {
+      return tr('game.place.needsOreSeam', 'Must be placed on an ore seam');
+    }
+    if (def.id !== 'extractor' && coversNode) {
+      return tr('game.place.seamExtractorOnly', 'Ore seam — only extractors fit here');
+    }
 
     return null;
   }
@@ -744,12 +766,19 @@ export class Game {
 
     if (this.plan.isBoss) {
       const bossDef = ENEMIES[this.level.boss];
-      this.setBanner(bossDef.name, 'FINAL WAVE — ' + (bossDef.description ?? ''), 5, '#ff4f5e');
+      this.setBanner(
+        enemyName(bossDef),
+        tr('game.banner.finalWave', 'FINAL WAVE — {desc}', { desc: enemyDesc(bossDef) ?? '' }),
+        5, '#ff4f5e',
+      );
       audio.play('bossRoar');
       this.shake(20);
       this.addFlash(1, 0.2, 0.25, 0.4);
     } else {
-      this.setBanner(`WAVE ${this.waveIndex + 1} / ${this.level.waves}`, this.describeWave(this.plan), 3, '#ffb347');
+      this.setBanner(
+        tr('game.banner.wave', 'WAVE {n} / {total}', { n: this.waveIndex + 1, total: this.level.waves }),
+        this.describeWave(this.plan), 3, '#ffb347',
+      );
       audio.play('waveStart');
       this.shake(5);
     }
@@ -758,7 +787,10 @@ export class Game {
   describeWave(plan: WavePlan): string {
     return plan.composition
       .slice(0, 4)
-      .map((c) => `${c.count}× ${ENEMIES[c.id]?.name ?? c.id}`)
+      .map((c) => {
+        const def = ENEMIES[c.id];
+        return tr('game.wave.composition', '{count}× {name}', { count: c.count, name: def ? enemyName(def) : c.id });
+      })
       .join('  ·  ');
   }
 
@@ -795,7 +827,13 @@ export class Game {
     }
     if (n > 0 && !this.stragglersEnraged) {
       this.stragglersEnraged = true;
-      this.setBanner('THE REMNANT TURNS', `${n} straggler${n > 1 ? 's' : ''} charging the core`, 2.8, '#ff4f5e');
+      this.setBanner(
+        tr('game.banner.remnantTurns', 'THE REMNANT TURNS'),
+        n > 1
+          ? tr('game.banner.stragglersMany', '{n} stragglers charging the core', { n })
+          : tr('game.banner.stragglersOne', '{n} straggler charging the core', { n }),
+        2.8, '#ff4f5e',
+      );
       audio.play('bossRoar');
     }
   }
@@ -820,10 +858,19 @@ export class Game {
     if (wasBoss) {
       // Endless boss cleared: a real payout, and the run keeps going.
       this.essence += 60;
-      this.setBanner('BOSS DOWN', `+${bonus} ore  ·  the hive sends more`, 3.4, '#ffcc55');
+      this.setBanner(
+        tr('game.banner.bossDown', 'BOSS DOWN'),
+        tr('game.banner.bossDownDetail', '+{bonus} ore  ·  the hive sends more', { bonus }),
+        3.4, '#ffcc55',
+      );
       audio.play('victory');
     } else {
-      this.setBanner('WAVE CLEARED', `+${bonus} ore  ·  next wave in ${this.level.buildTime}s`, 3, '#5cf2a0');
+      this.setBanner(
+        tr('game.banner.waveCleared', 'WAVE CLEARED'),
+        tr('game.banner.waveClearedDetail', '+{bonus} ore  ·  next wave in {seconds}s',
+          { bonus, seconds: this.level.buildTime }),
+        3, '#5cf2a0',
+      );
       audio.play('levelUp');
     }
 
@@ -935,7 +982,7 @@ export class Game {
     this.pendingDraft = null;
     this.frozen = false;
     audio.play('levelUp');
-    this.setBanner(card.name.toUpperCase(), card.desc, 3, '#b47cff');
+    this.setBanner(techName(card).toUpperCase(), techDesc(card), 3, '#b47cff');
   }
 
   private spawnFromGate(enemyId: string, gate: number, plan: WavePlan, elite: boolean) {
@@ -1222,6 +1269,13 @@ export class Game {
         if (b.built) {
           this.particles.ring(b.x, b.y, b.radius * 2, 0x7fd9ff, 0.35);
           audio.play('mineDone');
+          // A finished bay launches its whole complement at once — you paid for
+          // the drones. The respawn timer exists to make *losses* hurt, not to
+          // tax you for building the thing in the first place.
+          if (b.def.droneSlots !== undefined) {
+            for (let k = 0; k < Math.round(b.def.droneSlots); k++) this.spawnDrone(b);
+            b.droneCooldown = 0;
+          }
         }
         continue;
       }
@@ -1267,7 +1321,10 @@ export class Game {
     const slots = Math.round(b.def.droneSlots!);
     let live = 0;
     for (const d of this.drones) if (!d.dead && d.bayId === b.id) live++;
-    if (live >= slots) { b.droneCooldown = 0; return; }
+    // Deliberately does NOT clear the timer at capacity: killDrone starts it, and
+    // zeroing it here made every loss refill on the very next frame, which threw
+    // away the whole point of the drones being fragile.
+    if (live >= slots) return;
 
     // A browned-out bay rebuilds proportionally slower, like everything else.
     b.droneCooldown -= dt * Math.max(0.15, b.efficiency);
@@ -1436,18 +1493,34 @@ export class Game {
   }
 
   /**
-   * Nearest seam worth flying to. Skips seams an Extractor already owns, so the
-   * two systems complement each other instead of double-dipping one deposit.
+   * Picks a seam for one drone.
+   *
+   * Skips seams an Extractor already owns, so the two systems complement each
+   * other instead of double-dipping one deposit. Crowding is penalised rather
+   * than forbidden: without it a bay's whole flight converges on the single
+   * nearest seam, which flies in lockstep, drains one deposit at a time, and
+   * lets one blast take out every drone at once.
    */
   private pickSeamForDrone(bay: Building, range: number): number {
+    // How many of this bay's drones are already committed to each seam.
+    const taken = new Map<number, number>();
+    for (const d of this.drones) {
+      if (d.dead || d.bayId !== bay.id || d.nodeIndex < 0) continue;
+      taken.set(d.nodeIndex, (taken.get(d.nodeIndex) ?? 0) + 1);
+    }
+
     let best = -1;
-    let bestD = range * range;
+    let bestScore = Infinity;
+    const maxD2 = range * range;
     for (let i = 0; i < this.world.nodes.length; i++) {
       const n = this.world.nodes[i];
       if (n.amount <= 0 || n.claimedBy >= 0) continue;
       const nx = (n.tx + 0.5) * TILE, ny = (n.ty + 0.5) * TILE;
       const d2 = dist2(bay.x, bay.y, nx, ny);
-      if (d2 < bestD) { bestD = d2; best = i; }
+      if (d2 > maxD2) continue;
+      // A seam already worked by one drone has to be meaningfully closer to win.
+      const score = d2 * (1 + (taken.get(i) ?? 0) * 0.9);
+      if (score < bestScore) { bestScore = score; best = i; }
     }
     return best;
   }
@@ -1463,6 +1536,11 @@ export class Game {
     if (d.dead) return;
     d.dead = true;
     this.runStats.dronesLost++;
+    // Start the bay's rebuild clock here, at the moment of loss.
+    const bay = this.bayOf(d);
+    if (bay && !bay.dead) {
+      bay.droneCooldown = Math.max(bay.droneCooldown, bay.def.droneRespawn ?? 20);
+    }
     this.particles.explosion(d.x, d.y, 22, 0x7fd9ff, this.level.palette.rock);
     this.particles.gib(d.x, d.y, 0x4a5566, 5, 0.8);
     // Cargo in the hold is lost with it — that is the cost of the round trip.
@@ -2713,7 +2791,11 @@ export class Game {
         this.core.hp = this.core.maxHp * 0.3;
         this.core.reviveFlash = 1;
         this.explode(this.core.x, this.core.y, 320, 400, 'player', 999);
-        this.setBanner('CONTINGENCY CORE', 'The core reboots at 30%', 3.4, '#7dfff0');
+        this.setBanner(
+          tr('game.banner.contingencyCore', 'CONTINGENCY CORE'),
+          tr('game.banner.contingencyCoreDetail', 'The core reboots at 30%'),
+          3.4, '#7dfff0',
+        );
         audio.play('victory');
         this.shake(24);
         this.addFlash(0.6, 1, 1, 0.7);
@@ -2740,7 +2822,11 @@ export class Game {
       this.particles.explosion(p.x, p.y, 44, 0x7fd9ff, this.level.palette.rock);
       audio.play('explode');
       this.shake(12);
-      this.setBanner('CHASSIS DOWN', 'Rebuilding at the core…', 3, '#ff4f5e');
+      this.setBanner(
+        tr('game.banner.chassisDown', 'CHASSIS DOWN'),
+        tr('game.banner.chassisDownDetail', 'Rebuilding at the core…'),
+        3, '#ff4f5e',
+      );
     }
   }
 
@@ -2840,7 +2926,11 @@ export class Game {
       case 'relic':
         this.progress.awardRelics(q.amount);
         audio.play('levelUp');
-        this.setBanner('RELIC RECOVERED', 'Permanent account currency', 2.6, '#ffcc55');
+        this.setBanner(
+          tr('game.banner.relicRecovered', 'RELIC RECOVERED'),
+          tr('game.banner.relicRecoveredDetail', 'Permanent account currency'),
+          2.6, '#ffcc55',
+        );
         break;
     }
   }
@@ -3026,11 +3116,13 @@ export class Game {
 
   get waveLabel() {
     if (this.endless) {
-      if (this.plan?.isBoss || this.phase === 'boss') return `BOSS WAVE ${this.waveIndex + 1}`;
-      return `WAVE ${this.waveIndex + 1}`;
+      if (this.plan?.isBoss || this.phase === 'boss') {
+        return tr('game.waveLabel.bossWave', 'BOSS WAVE {n}', { n: this.waveIndex + 1 });
+      }
+      return tr('game.waveLabel.wave', 'WAVE {n}', { n: this.waveIndex + 1 });
     }
-    if (this.plan?.isBoss || this.phase === 'boss') return 'FINAL WAVE';
-    return `WAVE ${this.waveIndex + 1} / ${this.level.waves}`;
+    if (this.plan?.isBoss || this.phase === 'boss') return tr('game.waveLabel.finalWave', 'FINAL WAVE');
+    return tr('game.waveLabel.waveOfTotal', 'WAVE {n} / {total}', { n: this.waveIndex + 1, total: this.level.waves });
   }
 
   /** Waves until the next endless boss; 0 when the current wave is one. */
@@ -3220,8 +3312,13 @@ export class Game {
     // something that was only lost to saving.
     this.fillDroneBays();
 
-    this.setBanner('RUN RESUMED',
-      this.level.name + ' - wave ' + (this.waveIndex + 1) + (this.endless ? ' - endless' : ''),
+    this.setBanner(
+      tr('game.banner.runResumed', 'RUN RESUMED'),
+      this.endless
+        ? tr('game.banner.runResumedDetailEndless', '{level} - wave {wave} - endless',
+          { level: levelName(this.level), wave: this.waveIndex + 1 })
+        : tr('game.banner.runResumedDetail', '{level} - wave {wave}',
+          { level: levelName(this.level), wave: this.waveIndex + 1 }),
       3.2, '#5cf2a0');
     return true;
   }

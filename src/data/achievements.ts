@@ -1,4 +1,5 @@
 import type { PerkDelta } from './perks';
+import { t } from '../core/i18n';
 
 /**
  * Achievements are the meta-progression spine: every one that unlocks grants a
@@ -102,6 +103,16 @@ export const ACHIEVEMENTS: AchievementDef[] = [
 ];
 
 export const ACH_BY_ID = new Map(ACHIEVEMENTS.map((a) => [a.id, a]));
+
+/** Localised display name. English text above is the source of truth and fallback. */
+export function achievementName(a: AchievementDef): string {
+  return t(`achievement.${a.id}.name`, a.name);
+}
+
+/** Localised objective description. */
+export function achievementDesc(a: AchievementDef): string {
+  return t(`achievement.${a.id}.desc`, a.desc);
+}
 
 export const TIER_COLOR: Record<AchievementDef['tier'], string> = {
   bronze: '#c08552',

@@ -535,13 +535,16 @@ export class Renderer {
       if (b.muzzleFlash > 0) {
         // The bloom pass composites this twice, so a full-size blob here reads as
         // a flashbang on fast guns — scale it by the turret's authored flare.
+        // Kept small even at full flare: a cluster of turrets firing on the same
+        // spot adds these additively, and an oversized blob per gun buries the
+        // target under the pile-up long before any single flash looks too big.
         const flare = b.def.muzzleFlare ?? 1;
-        gctx.fillStyle = rgba(0xffe0a0, b.muzzleFlash * 0.8 * flare);
+        gctx.fillStyle = rgba(0xffe0a0, b.muzzleFlash * 0.5 * flare);
         gctx.beginPath();
         gctx.arc(
           b.x + Math.cos(b.angle) * b.radius,
           b.y + Math.sin(b.angle) * b.radius,
-          16 * b.muzzleFlash * flare, 0, TAU,
+          11 * b.muzzleFlash * flare, 0, TAU,
         );
         gctx.fill();
       }

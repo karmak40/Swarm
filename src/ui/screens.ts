@@ -1,14 +1,15 @@
 import { audio } from '../core/audio';
 import { fmtNum, fmtTime } from '../core/math';
-import { ACHIEVEMENTS, TIER_COLOR } from '../data/achievements';
+import { ACHIEVEMENTS, TIER_COLOR, achievementName, achievementDesc } from '../data/achievements';
 import { describePerk, type PerkDelta } from '../data/perks';
 import {
-  CATEGORY_BLURB, CATEGORY_LABEL, CATEGORY_ORDER, RELIC_UPGRADES,
+  CATEGORY_ORDER, RELIC_UPGRADES, categoryLabel, categoryBlurb, relicUpgradeName, relicUpgradeDesc,
 } from '../data/relicUpgrades';
-import { LEVELS } from '../data/levels';
-import type { TechCard } from '../data/tech';
+import { LEVELS, levelName, levelSubtitle, levelBriefing } from '../data/levels';
+import { techName, techDesc, type TechCard } from '../data/tech';
 import type { Game } from '../game/game';
 import type { Progress } from '../game/progress';
+import { detectLocale, setLocale, LOCALES, type LocaleCode, t as tr } from '../core/i18n';
 
 /**
  * DOM overlay layer.
@@ -126,12 +127,12 @@ export class Screens {
   showBoot() {
     const s = el('div', 'screen opaque');
     s.id = 'boot';
-    s.appendChild(el('div', 'title', 'SWARM'));
-    s.appendChild(el('div', 'subtitle', 'hold the line'));
+    s.appendChild(el('div', 'title', tr('screens.boot.title', 'SWARM')));
+    s.appendChild(el('div', 'subtitle', tr('screens.boot.subtitle', 'hold the line')));
     const bar = el('div', 'bar');
     bar.appendChild(el('i'));
     s.appendChild(bar);
-    s.appendChild(el('div', 'label', 'compiling procedural systems'));
+    s.appendChild(el('div', 'label', tr('screens.boot.compiling', 'compiling procedural systems')));
     this.open('boot', s);
   }
 
@@ -143,13 +144,14 @@ export class Screens {
     const s = el('div', 'screen opaque');
     const stack = el('div', 'stack');
 
-    stack.appendChild(el('h1', 'title', 'SWARM'));
-    stack.appendChild(el('p', 'subtitle', 'hold the line'));
+    stack.appendChild(el('h1', 'title', tr('screens.title.title', 'SWARM')));
+    stack.appendChild(el('p', 'subtitle', tr('screens.title.subtitle', 'hold the line')));
     // `pitch` and `title-stats` are dropped on short landscape phones, where the
     // menu itself needs every pixel.
     stack.appendChild(el('p', 'flavor pitch',
-      'One reactor core against an endless hive. Mine the seams, wall the approaches, and render the ' +
-      'swarm down into something you can spend. Every wave is a countdown to the one that ends the sector.'));
+      tr('screens.title.pitch',
+        'One reactor core against an endless hive. Mine the seams, wall the approaches, and render the ' +
+        'swarm down into something you can spend. Every wave is a countdown to the one that ends the sector.')));
 
     // Campaign progress readout, so a returning player can see at a glance that
     // their clears were saved and where they left off.
@@ -163,9 +165,10 @@ export class Screens {
       prog.style.alignItems = 'center';
       prog.style.gap = '10px';
 
-      const line = el('div', 'label',
-        done ? 'campaign complete · all sectors cleared'
-             : `campaign progress · ${cleared} sector${cleared === 1 ? '' : 's'} cleared`);
+      const line = el('div', 'label', done
+        ? tr('screens.title.campaignComplete', 'campaign complete · all sectors cleared')
+        : tr('screens.title.campaignProgress',
+          `campaign progress · ${cleared} sector${cleared === 1 ? '' : 's'} cleared`, { cleared }));
       line.style.color = done ? 'var(--relic)' : 'var(--good)';
       prog.appendChild(line);
 
@@ -181,7 +184,7 @@ export class Screens {
         pip.style.height = '5px';
         pip.style.background = i < cleared ? 'var(--good)' : 'var(--accent)';
         pip.style.boxShadow = i === cleared ? '0 0 10px var(--accent)' : 'none';
-        pip.title = `${i + 1}. ${lv.name}`;
+        pip.title = tr('screens.title.sectorPip', '{index}. {name}', { index: i + 1, name: levelName(lv) });
         pips.appendChild(pip);
       });
       prog.appendChild(pips);
@@ -192,8 +195,9 @@ export class Screens {
 
     if (resumable) {
       const label = resumable.endless
-        ? `Resume endless · wave ${resumable.wave}`
-        : `Resume · ${resumable.levelName}, wave ${resumable.wave}`;
+        ? tr('screens.title.resumeEndless', 'Resume endless · wave {wave}', { wave: resumable.wave })
+        : tr('screens.title.resumeRun', 'Resume · {level}, wave {wave}',
+          { level: resumable.levelName, wave: resumable.wave });
       const b = this.button(label, () => this.cb.onResumeRun());
       b.style.borderColor = 'rgba(92,242,160,0.55)';
       col.appendChild(b);
@@ -201,42 +205,48 @@ export class Screens {
 
     if (cleared > 0) {
       const next = Math.min(total - 1, progress.furthestUnlockedLevel);
+      const nextName = levelName(LEVELS[next]);
       col.appendChild(this.button(
-        done ? `Replay · ${next + 1}. ${LEVELS[next].name}` : `Continue · ${next + 1}. ${LEVELS[next].name}`,
+        done
+          ? tr('screens.title.replay', 'Replay · {index}. {name}', { index: next + 1, name: nextName })
+          : tr('screens.title.continue', 'Continue · {index}. {name}', { index: next + 1, name: nextName }),
         () => this.cb.onStartLevel(next, true),
       ));
-      col.appendChild(this.button('Sector select', () => this.showLevelSelect(progress), 'btn ghost'));
+      col.appendChild(this.button(tr('screens.title.sectorSelect', 'Sector select'), () => this.showLevelSelect(progress), 'btn ghost'));
     } else {
-      col.appendChild(this.button('New campaign', () => this.cb.onStartLevel(0, true)));
+      col.appendChild(this.button(tr('screens.title.newCampaign', 'New campaign'), () => this.cb.onStartLevel(0, true)));
     }
     if (cleared > 0) {
       const best = progress.endlessBestOverall;
       col.appendChild(this.button(
-        best > 0 ? `Endless · best wave ${best}` : 'Endless mode',
+        best > 0
+          ? tr('screens.title.endlessBest', 'Endless · best wave {best}', { best })
+          : tr('screens.title.endlessMode', 'Endless mode'),
         () => this.showEndlessSelect(progress), 'btn ghost',
       ));
     }
     col.appendChild(this.button(
-      `Armoury · ${progress.relics} ⬢`,
+      tr('screens.title.armoury', 'Armoury · {relics} ⬢', { relics: progress.relics }),
       () => this.showArmoury(progress), progress.relics > 0 ? 'btn' : 'btn ghost',
     ));
     col.appendChild(this.button(
-      `Achievements · ${progress.unlockedCount}/${progress.totalCount}`,
+      tr('screens.title.achievements', 'Achievements · {unlocked}/{total}',
+        { unlocked: progress.unlockedCount, total: progress.totalCount }),
       () => this.showAchievements(progress), 'btn ghost',
     ));
-    col.appendChild(this.button('Settings', () => this.showSettings(progress), 'btn ghost'));
+    col.appendChild(this.button(tr('screens.title.settings', 'Settings'), () => this.showSettings(progress), 'btn ghost'));
     stack.appendChild(col);
 
     // Lifetime stats strip.
     const st = progress.data.stats;
     const grid = el('div', 'stat-grid title-stats');
     const cells: [string, string][] = [
-      ['Runs', fmtNum(st.runs)],
-      ['Sectors cleared', fmtNum(st.victories)],
-      ['Total kills', fmtNum(st.kills)],
-      ['Bosses felled', fmtNum(st.bossKills)],
-      ['Ore mined', fmtNum(st.oreMined)],
-      ['Best wave', fmtNum(st.bestWave)],
+      [tr('screens.title.stats.runs', 'Runs'), fmtNum(st.runs)],
+      [tr('screens.title.stats.sectorsCleared', 'Sectors cleared'), fmtNum(st.victories)],
+      [tr('screens.title.stats.totalKills', 'Total kills'), fmtNum(st.kills)],
+      [tr('screens.title.stats.bossesFelled', 'Bosses felled'), fmtNum(st.bossKills)],
+      [tr('screens.title.stats.oreMined', 'Ore mined'), fmtNum(st.oreMined)],
+      [tr('screens.title.stats.bestWave', 'Best wave'), fmtNum(st.bestWave)],
     ];
     for (const [k, v] of cells) {
       const c = el('div', 'cell');
@@ -248,7 +258,7 @@ export class Screens {
 
     s.appendChild(stack);
     s.appendChild(el('div', 'hint-bar',
-      'WASD move · LMB fire · RMB mine · number keys build · SHIFT dash · TAB stats · ESC pause'));
+      tr('screens.title.hintBar', 'WASD move · LMB fire · RMB mine · number keys build · SHIFT dash · TAB stats · ESC pause')));
     this.open('title', s);
   }
 
@@ -259,11 +269,13 @@ export class Screens {
   showLevelSelect(progress: Progress) {
     const s = el('div', 'screen opaque');
     const stack = el('div', 'stack');
-    stack.appendChild(el('h2', undefined, 'Sector Select'));
+    stack.appendChild(el('h2', undefined, tr('screens.levelSelect.heading', 'Sector Select')));
     stack.appendChild(el('p', 'flavor',
-      `${progress.sectorsCleared} sector${progress.sectorsCleared === 1 ? '' : 's'} cleared. ` +
-      'Clearing a sector permanently unlocks the next one, so you can pick up from there any time. ' +
-      'The map is rolled fresh every deployment — starting a sector again is never the same fight.'));
+      tr('screens.levelSelect.intro',
+        `${progress.sectorsCleared} sector${progress.sectorsCleared === 1 ? '' : 's'} cleared. ` +
+        'Clearing a sector permanently unlocks the next one, so you can pick up from there any time. ' +
+        'The map is rolled fresh every deployment — starting a sector again is never the same fight.',
+        { cleared: progress.sectorsCleared })));
 
     const row = el('div', 'card-row');
     LEVELS.forEach((lv, i) => {
@@ -272,23 +284,27 @@ export class Screens {
       if (locked) card.style.opacity = '0.4';
       card.style.borderColor = `rgba(120,190,255,${locked ? 0.1 : 0.35})`;
 
-      card.appendChild(el('div', 'rarity r-rare', lv.subtitle));
-      card.appendChild(el('h3', undefined, `${i + 1}. ${lv.name}`));
+      card.appendChild(el('div', 'rarity r-rare', levelSubtitle(lv)));
+      card.appendChild(el('h3', undefined,
+        tr('screens.levelSelect.cardTitle', '{index}. {name}', { index: i + 1, name: levelName(lv) })));
       const meta = el('p');
       meta.innerHTML = locked
-        ? '<em>Locked — clear the previous sector.</em>'
-        : `${lv.waves} waves · boss: <strong>${lv.boss.toUpperCase()}</strong><br><br>${lv.briefing}`;
+        ? `<em>${tr('screens.levelSelect.lockedMeta', 'Locked — clear the previous sector.')}</em>`
+        : tr('screens.levelSelect.meta', '{waves} waves · boss: <strong>{boss}</strong><br><br>{briefing}',
+          { waves: lv.waves, boss: lv.boss.toUpperCase(), briefing: levelBriefing(lv) });
       card.appendChild(meta);
 
       const badge = el('div', 'rarity');
       if (i <= progress.data.highestLevel) {
-        badge.textContent = '✔ CLEARED';
+        badge.textContent = tr('screens.levelSelect.cleared', '✔ CLEARED');
         badge.style.color = 'var(--good)';
       } else if (!locked) {
-        badge.textContent = i === 0 ? 'START HERE' : '▶ UNLOCKED — CONTINUE HERE';
+        badge.textContent = i === 0
+          ? tr('screens.levelSelect.startHere', 'START HERE')
+          : tr('screens.levelSelect.unlockedContinue', '▶ UNLOCKED — CONTINUE HERE');
         badge.style.color = 'var(--accent)';
       } else {
-        badge.textContent = '🔒 LOCKED';
+        badge.textContent = tr('screens.levelSelect.lockedBadge', '🔒 LOCKED');
       }
       card.appendChild(badge);
 
@@ -301,7 +317,7 @@ export class Screens {
       row.appendChild(card);
     });
     stack.appendChild(row);
-    stack.appendChild(this.button('Back', () => this.showTitle(progress), 'btn ghost'));
+    stack.appendChild(this.button(tr('screens.levelSelect.back', 'Back'), () => this.showTitle(progress), 'btn ghost'));
     s.appendChild(stack);
     this.open('levelSelect', s);
   }
@@ -313,19 +329,21 @@ export class Screens {
   showArmoury(progress: Progress) {
     const s = el('div', 'screen opaque');
     const stack = el('div', 'stack');
-    stack.appendChild(el('h2', undefined, 'Armoury'));
+    stack.appendChild(el('h2', undefined, tr('screens.armoury.heading', 'Armoury')));
     stack.appendChild(el('p', 'flavor',
-      'Relics come from clearing sectors, felling bosses and earning achievements. ' +
-      'Everything bought here is permanent and applies to every run from now on.'));
+      tr('screens.armoury.intro',
+        'Relics come from clearing sectors, felling bosses and earning achievements. ' +
+        'Everything bought here is permanent and applies to every run from now on.')));
 
     // Relic wallet.
     const bar = el('div', 'relic-bar');
-    const amount = el('div', 'amount', `${progress.relics} ⬢`);
+    const amount = el('div', 'amount', tr('screens.armoury.relicAmount', '{relics} ⬢', { relics: progress.relics }));
     bar.appendChild(amount);
     const sub = el('div', 'sub');
     const refreshWallet = () => {
-      amount.textContent = `${progress.relics} ⬢`;
-      sub.innerHTML = `RELICS AVAILABLE<br>${progress.spentRelics} invested · ${progress.data.relicsEarned} earned all-time`;
+      amount.textContent = tr('screens.armoury.relicAmount', '{relics} ⬢', { relics: progress.relics });
+      sub.innerHTML = tr('screens.armoury.walletSub', 'RELICS AVAILABLE<br>{spent} invested · {earned} earned all-time',
+        { spent: progress.spentRelics, earned: progress.data.relicsEarned });
     };
     bar.appendChild(sub);
     stack.appendChild(bar);
@@ -340,8 +358,8 @@ export class Screens {
       if (!items.length) continue;
 
       const section = el('div', 'shop-cat');
-      section.appendChild(el('h4', undefined, CATEGORY_LABEL[cat]));
-      section.appendChild(el('div', 'blurb', CATEGORY_BLURB[cat]));
+      section.appendChild(el('h4', undefined, categoryLabel(cat)));
+      section.appendChild(el('div', 'blurb', categoryBlurb(cat)));
       const grid = el('div', 'shop-grid');
 
       for (const u of items) {
@@ -349,8 +367,8 @@ export class Screens {
         card.appendChild(el('div', 'icon', u.icon));
 
         const body = el('div', 'body');
-        body.appendChild(el('div', 'name', u.name));
-        body.appendChild(el('div', 'desc', u.desc));
+        body.appendChild(el('div', 'name', relicUpgradeName(u)));
+        body.appendChild(el('div', 'desc', relicUpgradeDesc(u)));
         const effect = el('div', 'effect');
         body.appendChild(effect);
         const pips = el('div', 'pips');
@@ -370,10 +388,11 @@ export class Screens {
           // next rank — quoting the per-rank delta again reads as a duplicate.
           const owned = describePerk(scalePerk(u.perRank, rank));
           effect.textContent = maxed
-            ? `MAXED — ${owned}`
+            ? tr('screens.armoury.effectMaxed', 'MAXED — {owned}', { owned })
             : rank > 0
-              ? `${owned}   →   ${describePerk(scalePerk(u.perRank, rank + 1))}`
-              : `Per rank: ${describePerk(u.perRank)}`;
+              ? tr('screens.armoury.effectUpgrade', '{owned}   →   {next}',
+                { owned, next: describePerk(scalePerk(u.perRank, rank + 1)) })
+              : tr('screens.armoury.effectPerRank', 'Per rank: {perk}', { perk: describePerk(u.perRank) });
 
           pips.innerHTML = '';
           for (let i = 0; i < u.maxRank; i++) {
@@ -384,11 +403,11 @@ export class Screens {
 
           if (maxed) {
             buy.className = 'buy done';
-            buy.textContent = '✔ MAX';
+            buy.textContent = tr('screens.armoury.maxButton', '✔ MAX');
             buy.disabled = true;
           } else {
             buy.className = 'buy';
-            buy.textContent = `${cost} ⬢`;
+            buy.textContent = tr('screens.armoury.costButton', '{cost} ⬢', { cost });
             buy.disabled = !progress.canBuy(u);
           }
         };
@@ -413,10 +432,11 @@ export class Screens {
     stack.appendChild(wrap);
 
     const btnRow = el('div', 'row');
-    btnRow.appendChild(this.button('Back', () => this.showTitle(progress), 'btn ghost'));
-    btnRow.appendChild(this.button('Refund all', () => {
+    btnRow.appendChild(this.button(tr('screens.armoury.back', 'Back'), () => this.showTitle(progress), 'btn ghost'));
+    btnRow.appendChild(this.button(tr('screens.armoury.refundAll', 'Refund all'), () => {
       if (progress.spentRelics <= 0) { audio.play('error'); return; }
-      if (!confirm(`Refund every upgrade and get ${progress.spentRelics} relics back?`)) return;
+      if (!confirm(tr('screens.armoury.refundConfirm', 'Refund every upgrade and get {relics} relics back?',
+        { relics: progress.spentRelics }))) return;
       progress.respec();
       audio.play('sell');
       this.showArmoury(progress);
@@ -434,26 +454,30 @@ export class Screens {
   showEndlessSelect(progress: Progress) {
     const s = el('div', 'screen opaque');
     const stack = el('div', 'stack');
-    stack.appendChild(el('p', 'subtitle', 'no last wave'));
-    stack.appendChild(el('h2', undefined, 'Endless'));
+    stack.appendChild(el('p', 'subtitle', tr('screens.endlessSelect.subtitle', 'no last wave')));
+    stack.appendChild(el('h2', undefined, tr('screens.endlessSelect.heading', 'Endless')));
     stack.appendChild(el('p', 'flavor',
-      'The hive never stops. Waves escalate forever and a boss arrives every tenth one. ' +
-      'There is no victory here — only how far you get, and the relics you bring back.'));
+      tr('screens.endlessSelect.intro',
+        'The hive never stops. Waves escalate forever and a boss arrives every tenth one. ' +
+        'There is no victory here — only how far you get, and the relics you bring back.')));
 
     const row = el('div', 'card-row');
     LEVELS.forEach((lv, i) => {
       if (!progress.canPlayLevel(i)) return;
       const best = progress.endlessBest(i);
       const card = el('div', 'tech-card');
-      card.appendChild(el('div', 'rarity r-rare', lv.subtitle));
-      card.appendChild(el('h3', undefined, `${i + 1}. ${lv.name}`));
+      card.appendChild(el('div', 'rarity r-rare', levelSubtitle(lv)));
+      card.appendChild(el('h3', undefined,
+        tr('screens.endlessSelect.cardTitle', '{index}. {name}', { index: i + 1, name: levelName(lv) })));
       const meta = el('p');
-      meta.innerHTML =
-        `${lv.spawnPoints} hive gates · ${lv.roster.length} enemy types<br><br>` +
-        `Difficulty multiplier <strong>x${lv.difficulty.toFixed(2)}</strong>`;
+      meta.innerHTML = tr('screens.endlessSelect.meta',
+        '{gates} hive gates · {types} enemy types<br><br>Difficulty multiplier <strong>x{difficulty}</strong>',
+        { gates: lv.spawnPoints, types: lv.roster.length, difficulty: lv.difficulty.toFixed(2) });
       card.appendChild(meta);
       const badge = el('div', 'rarity');
-      badge.textContent = best > 0 ? `BEST: WAVE ${best}` : 'NO RECORD YET';
+      badge.textContent = best > 0
+        ? tr('screens.endlessSelect.best', 'BEST: WAVE {wave}', { wave: best })
+        : tr('screens.endlessSelect.noRecord', 'NO RECORD YET');
       badge.style.color = best > 0 ? 'var(--relic)' : 'var(--ink-faint)';
       card.appendChild(badge);
       card.addEventListener('pointerenter', () => audio.play('uiHover'));
@@ -461,7 +485,7 @@ export class Screens {
       row.appendChild(card);
     });
     stack.appendChild(row);
-    stack.appendChild(this.button('Back', () => this.showTitle(progress), 'btn ghost'));
+    stack.appendChild(this.button(tr('screens.endlessSelect.back', 'Back'), () => this.showTitle(progress), 'btn ghost'));
     s.appendChild(stack);
     this.open('endlessSelect', s);
   }
@@ -473,10 +497,12 @@ export class Screens {
   showAchievements(progress: Progress, backTo: 'title' | 'pause' = 'title') {
     const s = el('div', 'screen opaque');
     const stack = el('div', 'stack');
-    stack.appendChild(el('h2', undefined, 'Achievements'));
+    stack.appendChild(el('h2', undefined, tr('screens.achievements.heading', 'Achievements')));
     stack.appendChild(el('p', 'flavor',
-      `${progress.unlockedCount} of ${progress.totalCount} unlocked. Every unlock grants a permanent ` +
-      'bonus applied at the start of every run — they stack.'));
+      tr('screens.achievements.intro',
+        '{unlocked} of {total} unlocked. Every unlock grants a permanent ' +
+        'bonus applied at the start of every run — they stack.',
+        { unlocked: progress.unlockedCount, total: progress.totalCount })));
 
     const wrap = el('div', 'ach-wrap');
     const grid = el('div', 'ach-grid');
@@ -498,11 +524,12 @@ export class Screens {
 
       const body = el('div');
       body.style.flex = '1';
-      const name = el('div', 'name', hidden ? 'Hidden Achievement' : a.name);
+      const name = el('div', 'name', hidden ? tr('screens.achievements.hiddenName', 'Hidden Achievement') : achievementName(a));
       name.style.color = TIER_COLOR[a.tier];
       body.appendChild(name);
-      body.appendChild(el('div', 'desc', hidden ? 'Discover it in the field.' : a.desc));
-      body.appendChild(el('div', 'perk', `⬆ ${describePerk(a.perk)}`));
+      body.appendChild(el('div', 'desc',
+        hidden ? tr('screens.achievements.hiddenDesc', 'Discover it in the field.') : achievementDesc(a)));
+      body.appendChild(el('div', 'perk', tr('screens.achievements.perkPrefix', '⬆ {perk}', { perk: describePerk(a.perk) })));
 
       if (!unlocked && !hidden && a.goal > 1) {
         const bar = el('div', 'bar');
@@ -510,7 +537,8 @@ export class Screens {
         i.style.width = `${Math.min(100, (prog / a.goal) * 100)}%`;
         bar.appendChild(i);
         body.appendChild(bar);
-        const t = el('div', 'desc', `${fmtNum(prog)} / ${fmtNum(a.goal)}`);
+        const t = el('div', 'desc',
+          tr('screens.achievements.progress', '{prog} / {goal}', { prog: fmtNum(prog), goal: fmtNum(a.goal) }));
         t.style.fontSize = '10px';
         body.appendChild(t);
       }
@@ -520,7 +548,7 @@ export class Screens {
 
     wrap.appendChild(grid);
     stack.appendChild(wrap);
-    stack.appendChild(this.button('Back', () => {
+    stack.appendChild(this.button(tr('screens.achievements.back', 'Back'), () => {
       if (backTo === 'pause') this.showPause(progress, true);
       else this.showTitle(progress);
     }, 'btn ghost'));
@@ -535,7 +563,7 @@ export class Screens {
   showSettings(progress: Progress) {
     const s = el('div', 'screen opaque');
     const stack = el('div', 'stack');
-    stack.appendChild(el('h2', undefined, 'Settings'));
+    stack.appendChild(el('h2', undefined, tr('screens.settings.heading', 'Settings')));
 
     const panel = el('div', 'panel clip-corner');
     panel.style.padding = '26px 30px';
@@ -543,6 +571,13 @@ export class Screens {
     panel.style.display = 'flex';
     panel.style.flexDirection = 'column';
     panel.style.gap = '18px';
+    // The row count (and each label's wrapped height) varies by language and
+    // viewport, so cap the panel and let it scroll rather than pushing the
+    // Back/Wipe-save row off the bottom of a short screen. Reserving a fixed
+    // budget for the heading + button row (instead of a flat vh%) means a
+    // roomy window still shows the whole panel with no scrollbar at all.
+    panel.style.maxHeight = 'calc(100vh - 220px)';
+    panel.style.overflowY = 'auto';
 
     const st = progress.data.settings;
 
@@ -600,11 +635,11 @@ export class Screens {
       const row = el('div', 'row');
       row.style.justifyContent = 'space-between';
       row.appendChild(el('div', 'label', label));
-      const b = el('button', 'btn ghost', value ? 'ON' : 'OFF');
+      const b = el('button', 'btn ghost', value ? tr('screens.settings.on', 'ON') : tr('screens.settings.off', 'OFF'));
       b.style.padding = '6px 20px';
       b.addEventListener('click', () => {
         value = !value;
-        b.textContent = value ? 'ON' : 'OFF';
+        b.textContent = value ? tr('screens.settings.on', 'ON') : tr('screens.settings.off', 'OFF');
         onChange(value);
         audio.play('uiClick');
         this.cb.onSettingChange();
@@ -613,44 +648,77 @@ export class Screens {
       return row;
     };
 
-    panel.appendChild(slider('Effects volume', st.sfx, 0, 1, 0.05, (v) => { st.sfx = v; audio.setVolume('sfx', v); }));
-    panel.appendChild(slider('Music volume', st.music, 0, 1, 0.05, (v) => { st.music = v; audio.setVolume('music', v); }));
-    panel.appendChild(slider('Interface volume', st.ui, 0, 1, 0.05, (v) => { st.ui = v; audio.setVolume('ui', v); }));
-    panel.appendChild(slider('Screen shake', st.screenShake, 0, 1.5, 0.1, (v) => { st.screenShake = v; }));
-    panel.appendChild(toggle('Mute all', st.muted, (v) => { st.muted = v; audio.setMuted(v); }));
-    panel.appendChild(toggle('Bloom', st.bloom, (v) => { st.bloom = v; }));
-    panel.appendChild(toggle('Damage numbers', st.showDamageNumbers, (v) => { st.showDamageNumbers = v; }));
+    const localeOptions = LOCALES.map((l) => l.code);
+    const localeLabels = Object.fromEntries(
+      [['auto', tr('screens.settings.auto', 'AUTO')] as const,
+        ...LOCALES.map((l): [LocaleCode, string] => [l.code, l.label.toUpperCase()])],
+    ) as Record<'auto' | LocaleCode, string>;
+    panel.appendChild(cycle(
+      tr('screens.settings.language', 'Language'), st.locale, ['auto', ...localeOptions] as const, localeLabels,
+      (v) => {
+        st.locale = v;
+        setLocale(v === 'auto' ? detectLocale() : v);
+        // Every label on this very screen needs to redraw in the new language.
+        this.showSettings(progress);
+      },
+    ));
+
+    panel.appendChild(slider(tr('screens.settings.effectsVolume', 'Effects volume'), st.sfx, 0, 1, 0.05,
+      (v) => { st.sfx = v; audio.setVolume('sfx', v); }));
+    panel.appendChild(slider(tr('screens.settings.musicVolume', 'Music volume'), st.music, 0, 1, 0.05,
+      (v) => { st.music = v; audio.setVolume('music', v); }));
+    panel.appendChild(slider(tr('screens.settings.interfaceVolume', 'Interface volume'), st.ui, 0, 1, 0.05,
+      (v) => { st.ui = v; audio.setVolume('ui', v); }));
+    panel.appendChild(slider(tr('screens.settings.screenShake', 'Screen shake'), st.screenShake, 0, 1.5, 0.1,
+      (v) => { st.screenShake = v; }));
+    panel.appendChild(toggle(tr('screens.settings.muteAll', 'Mute all'), st.muted, (v) => { st.muted = v; audio.setMuted(v); }));
+    panel.appendChild(toggle(tr('screens.settings.bloom', 'Bloom'), st.bloom, (v) => { st.bloom = v; }));
+    panel.appendChild(toggle(tr('screens.settings.damageNumbers', 'Damage numbers'), st.showDamageNumbers,
+      (v) => { st.showDamageNumbers = v; }));
 
     // --- controls & performance ---
     const divider = el('div');
     divider.style.borderTop = '1px solid var(--line)';
     divider.style.margin = '4px 0';
     panel.appendChild(divider);
-    panel.appendChild(el('div', 'label', 'controls & performance'));
+    panel.appendChild(el('div', 'label', tr('screens.settings.controlsPerformance', 'controls & performance')));
 
     panel.appendChild(cycle(
-      'Control scheme', st.controls, ['auto', 'touch', 'desktop'] as const,
-      { auto: 'AUTO', touch: 'TOUCH', desktop: 'MOUSE + KEYS' },
+      tr('screens.settings.controlScheme', 'Control scheme'), st.controls, ['auto', 'touch', 'desktop'] as const,
+      {
+        auto: tr('screens.settings.auto', 'AUTO'),
+        touch: tr('screens.settings.controlSchemeTouch', 'TOUCH'),
+        desktop: tr('screens.settings.controlSchemeDesktop', 'MOUSE + KEYS'),
+      },
       (v) => { st.controls = v; },
     ));
     panel.appendChild(cycle(
-      'Render quality', st.quality, ['auto', 'low', 'medium', 'high'] as const,
-      { auto: 'AUTO', low: 'LOW', medium: 'MEDIUM', high: 'HIGH' },
+      tr('screens.settings.renderQuality', 'Render quality'), st.quality, ['auto', 'low', 'medium', 'high'] as const,
+      {
+        auto: tr('screens.settings.auto', 'AUTO'),
+        low: tr('screens.settings.qualityLow', 'LOW'),
+        medium: tr('screens.settings.qualityMedium', 'MEDIUM'),
+        high: tr('screens.settings.qualityHigh', 'HIGH'),
+      },
       (v) => { st.quality = v; },
     ));
-    panel.appendChild(slider('Interface scale', st.uiScale, 0.8, 1.6, 0.1, (v) => { st.uiScale = v; }));
+    panel.appendChild(slider(tr('screens.settings.uiScale', 'Interface scale'), st.uiScale, 0.8, 1.6, 0.1,
+      (v) => { st.uiScale = v; }));
     // Both assists are forced on under touch controls; the toggles matter on desktop.
-    panel.appendChild(toggle('Auto-aim (always on for touch)', st.autoAim, (v) => { st.autoAim = v; }));
-    panel.appendChild(toggle('Auto-mine (always on for touch)', st.autoMine, (v) => { st.autoMine = v; }));
-    panel.appendChild(toggle('Left-handed layout', st.southpaw, (v) => { st.southpaw = v; }));
-    panel.appendChild(toggle('Vibration', st.haptics, (v) => { st.haptics = v; }));
+    panel.appendChild(toggle(tr('screens.settings.autoAim', 'Auto-aim (always on for touch)'), st.autoAim,
+      (v) => { st.autoAim = v; }));
+    panel.appendChild(toggle(tr('screens.settings.autoMine', 'Auto-mine (always on for touch)'), st.autoMine,
+      (v) => { st.autoMine = v; }));
+    panel.appendChild(toggle(tr('screens.settings.southpaw', 'Left-handed layout'), st.southpaw, (v) => { st.southpaw = v; }));
+    panel.appendChild(toggle(tr('screens.settings.haptics', 'Vibration'), st.haptics, (v) => { st.haptics = v; }));
 
     stack.appendChild(panel);
 
     const row = el('div', 'row');
-    row.appendChild(this.button('Back', () => this.showTitle(progress), 'btn ghost'));
-    row.appendChild(this.button('Wipe save', () => {
-      if (confirm('Erase all achievements, unlocks and lifetime stats? This cannot be undone.')) {
+    row.appendChild(this.button(tr('screens.settings.back', 'Back'), () => this.showTitle(progress), 'btn ghost'));
+    row.appendChild(this.button(tr('screens.settings.wipeSave', 'Wipe save'), () => {
+      if (confirm(tr('screens.settings.wipeSaveConfirm',
+        'Erase all achievements, unlocks and lifetime stats? This cannot be undone.'))) {
         localStorage.removeItem('swarm.save.v1');
         location.reload();
       }
@@ -670,24 +738,26 @@ export class Screens {
     const s = el('div', 'screen');
     const stack = el('div', 'stack');
 
-    stack.appendChild(el('p', 'subtitle', lv.subtitle));
-    stack.appendChild(el('h2', undefined, lv.name));
-    stack.appendChild(el('p', 'flavor', lv.briefing));
+    stack.appendChild(el('p', 'subtitle', levelSubtitle(lv)));
+    stack.appendChild(el('h2', undefined, levelName(lv)));
+    stack.appendChild(el('p', 'flavor', levelBriefing(lv)));
     const rolled = el('p', 'flavor');
     rolled.style.fontSize = '12px';
-    rolled.innerHTML = `Terrain, ore seams and hive gates are rolled fresh for this deployment — ` +
-      `map seed <strong style="color:var(--accent)">${game.seedCode}</strong>.`;
+    rolled.innerHTML = tr('screens.briefing.mapSeed',
+      'Terrain, ore seams and hive gates are rolled fresh for this deployment — ' +
+      'map seed <strong style="color:var(--accent)">{seed}</strong>.',
+      { seed: game.seedCode });
     stack.appendChild(rolled);
 
     const grid = el('div', 'stat-grid');
-    const boss = game.endless ? 'EVERY 10 WAVES' : lv.boss.toUpperCase();
+    const boss = game.endless ? tr('screens.briefing.bossCadenceValue', 'EVERY 10 WAVES') : lv.boss.toUpperCase();
     const cells: [string, string][] = [
-      ['Waves', game.endless ? '∞' : `${lv.waves}`],
-      ['Hive gates', `${lv.spawnPoints}`],
-      ['Ore seams', `${lv.oreNodes + lv.richNodes}`],
-      [game.endless ? 'Boss cadence' : 'Final wave', boss],
-      ['Starting ore', `${Math.round(lv.startOre + game.perks.startOre)}`],
-      ['Map seed', game.seedCode],
+      [tr('screens.briefing.waves', 'Waves'), game.endless ? '∞' : `${lv.waves}`],
+      [tr('screens.briefing.hiveGates', 'Hive gates'), `${lv.spawnPoints}`],
+      [tr('screens.briefing.oreSeams', 'Ore seams'), `${lv.oreNodes + lv.richNodes}`],
+      [game.endless ? tr('screens.briefing.bossCadence', 'Boss cadence') : tr('screens.briefing.finalWave', 'Final wave'), boss],
+      [tr('screens.briefing.startingOre', 'Starting ore'), `${Math.round(lv.startOre + game.perks.startOre)}`],
+      [tr('screens.briefing.mapSeedLabel', 'Map seed'), game.seedCode],
     ];
     for (const [k, v] of cells) {
       const c = el('div', 'cell');
@@ -702,13 +772,20 @@ export class Screens {
     if (unlocked.length) {
       const p = el('p', 'flavor');
       p.style.color = 'var(--good)';
-      p.innerHTML = `<strong>${unlocked.length} permanent bonuses active</strong><br>` +
-        unlocked.slice(0, 8).map((a) => describePerk(a.perk)).join(' · ') +
-        (unlocked.length > 8 ? ` · +${unlocked.length - 8} more` : '');
+      const moreCount = unlocked.length - 8;
+      const morePart = moreCount > 0
+        ? tr('screens.briefing.moreBonuses', ' · +{n} more', { n: moreCount })
+        : '';
+      p.innerHTML = tr('screens.briefing.bonusesActive', '<strong>{count} permanent bonuses active</strong><br>{list}{more}',
+        {
+          count: unlocked.length,
+          list: unlocked.slice(0, 8).map((a) => describePerk(a.perk)).join(' · '),
+          more: morePart,
+        });
       stack.appendChild(p);
     }
 
-    stack.appendChild(this.button('Begin deployment', () => { this.close(); onBegin(); }));
+    stack.appendChild(this.button(tr('screens.briefing.begin', 'Begin deployment'), () => { this.close(); onBegin(); }));
     s.appendChild(stack);
     this.open('briefing', s);
   }
@@ -720,28 +797,29 @@ export class Screens {
   showPause(progress: Progress, canSave = false) {
     const s = el('div', 'screen');
     const stack = el('div', 'stack');
-    stack.appendChild(el('h2', undefined, 'Paused'));
+    stack.appendChild(el('h2', undefined, tr('screens.pause.heading', 'Paused')));
     const col = el('div', 'menu-col');
-    col.appendChild(this.button('Resume', () => { this.close(); this.cb.onResume(); }));
-    col.appendChild(this.button('Achievements', () => this.showAchievements(progress, 'pause'), 'btn ghost'));
-    col.appendChild(this.button('Settings', () => this.showSettings(progress), 'btn ghost'));
-    col.appendChild(this.button('Restart sector', () => {
-      if (confirm('Restart this sector from wave 1?')) this.cb.onRestart();
+    col.appendChild(this.button(tr('screens.pause.resume', 'Resume'), () => { this.close(); this.cb.onResume(); }));
+    col.appendChild(this.button(tr('screens.pause.achievements', 'Achievements'), () => this.showAchievements(progress, 'pause'), 'btn ghost'));
+    col.appendChild(this.button(tr('screens.pause.settings', 'Settings'), () => this.showSettings(progress), 'btn ghost'));
+    col.appendChild(this.button(tr('screens.pause.restartSector', 'Restart sector'), () => {
+      if (confirm(tr('screens.pause.restartConfirm', 'Restart this sector from wave 1?'))) this.cb.onRestart();
     }, 'btn ghost'));
     // Only offered in a build phase: that is the only state a snapshot covers.
     if (canSave) {
-      col.appendChild(this.button('Save & quit', () => this.cb.onSaveAndQuit(), 'btn ghost'));
+      col.appendChild(this.button(tr('screens.pause.saveAndQuit', 'Save & quit'), () => this.cb.onSaveAndQuit(), 'btn ghost'));
     }
-    col.appendChild(this.button('Abandon run', () => {
-      if (confirm('Abandon the run? Any saved progress for this run is discarded.')) {
+    col.appendChild(this.button(tr('screens.pause.abandonRun', 'Abandon run'), () => {
+      if (confirm(tr('screens.pause.abandonConfirm', 'Abandon the run? Any saved progress for this run is discarded.'))) {
         this.cb.onQuitToTitle();
       }
     }, 'btn danger'));
     stack.appendChild(col);
     s.appendChild(stack);
     s.appendChild(el('div', 'hint-bar',
-      canSave ? 'ESC to resume · the run auto-saves at the start of every build phase'
-              : 'ESC to resume · saving is available during build phases'));
+      canSave
+        ? tr('screens.pause.hintCanSave', 'ESC to resume · the run auto-saves at the start of every build phase')
+        : tr('screens.pause.hintCannotSave', 'ESC to resume · saving is available during build phases')));
     this.open('pause', s);
   }
 
@@ -752,9 +830,10 @@ export class Screens {
   showDraft(cards: TechCard[]) {
     const s = el('div', 'screen');
     const stack = el('div', 'stack');
-    stack.appendChild(el('p', 'subtitle', 'field requisition'));
-    stack.appendChild(el('h2', undefined, 'Choose an upgrade'));
-    stack.appendChild(el('p', 'flavor', 'This choice lasts for the rest of the run and carries into the next sector.'));
+    stack.appendChild(el('p', 'subtitle', tr('screens.draft.subtitle', 'field requisition')));
+    stack.appendChild(el('h2', undefined, tr('screens.draft.heading', 'Choose an upgrade')));
+    stack.appendChild(el('p', 'flavor',
+      tr('screens.draft.intro', 'This choice lasts for the rest of the run and carries into the next sector.')));
 
     const row = el('div', 'card-row');
     for (const c of cards) {
@@ -764,8 +843,8 @@ export class Screens {
         : c.rarity === 'rare' ? 'var(--accent)' : 'var(--ink-dim)';
       card.appendChild(glyph);
       card.appendChild(el('div', `rarity r-${c.rarity}`, c.rarity));
-      card.appendChild(el('h3', undefined, c.name));
-      card.appendChild(el('p', undefined, c.desc));
+      card.appendChild(el('h3', undefined, techName(c)));
+      card.appendChild(el('p', undefined, techDesc(c)));
       if (c.perk) {
         const p = el('div', 'rarity');
         p.style.color = 'var(--good)';
@@ -794,50 +873,60 @@ export class Screens {
     const s = el('div', 'screen opaque');
     const stack = el('div', 'stack');
 
-    stack.appendChild(el('p', 'subtitle', isFinalSector ? 'campaign complete' : 'sector secured'));
-    const h = el('h2', undefined, isFinalSector ? 'The Hive Is Silent' : 'Sector Secured');
+    stack.appendChild(el('p', 'subtitle', isFinalSector
+      ? tr('screens.victory.subtitleCampaign', 'campaign complete')
+      : tr('screens.victory.subtitleSector', 'sector secured')));
+    const h = el('h2', undefined, isFinalSector
+      ? tr('screens.victory.titleCampaign', 'The Hive Is Silent')
+      : tr('screens.victory.titleSector', 'Sector Secured'));
     h.style.color = 'var(--good)';
     stack.appendChild(h);
     stack.appendChild(el('p', 'flavor', isFinalSector
-      ? 'The World-Eater is scrap and the throat is collapsing behind you. Every achievement you earned ' +
-        'is permanent — start again and you will start stronger.'
-      : `${sum.level.name} is clear. Your tech and unlocks carry forward.`));
+      ? tr('screens.victory.flavorCampaign',
+        'The World-Eater is scrap and the throat is collapsing behind you. Every achievement you earned ' +
+        'is permanent — start again and you will start stronger.')
+      : tr('screens.victory.flavorSector', '{level} is clear. Your tech and unlocks carry forward.',
+        { level: levelName(sum.level) })));
 
     if (!isFinalSector) {
       const nextLv = LEVELS[Math.min(LEVELS.length - 1, sum.level.id + 1)];
       const saved = el('p', 'flavor');
       saved.style.color = 'var(--good)';
-      saved.innerHTML =
-        `✔ <strong>Progress saved.</strong> Sector ${nextLv.id + 1} — ${nextLv.name} — is unlocked. ` +
-        'You can quit now and start straight from there next time.';
+      saved.innerHTML = tr('screens.victory.progressSaved',
+        '✔ <strong>Progress saved.</strong> Sector {index} — {name} — is unlocked. ' +
+        'You can quit now and start straight from there next time.',
+        { index: nextLv.id + 1, name: levelName(nextLv) });
       stack.appendChild(saved);
     }
 
     if (game.lastRelicAward > 0) {
       const relic = el('p', 'flavor');
       relic.style.color = 'var(--relic)';
-      relic.innerHTML = `⬢ <strong>+${game.lastRelicAward} relics</strong> — ${game.progress.relics} banked. ` +
-        'Spend them in the Armoury for permanent upgrades that apply to every future run.';
+      relic.innerHTML = tr('screens.victory.relicAward',
+        '⬢ <strong>+{award} relics</strong> — {total} banked. ' +
+        'Spend them in the Armoury for permanent upgrades that apply to every future run.',
+        { award: game.lastRelicAward, total: game.progress.relics });
       stack.appendChild(relic);
     }
 
+    const structuresLostLabel = tr('screens.victory.stats.structuresLost', 'Structures lost');
     const grid = el('div', 'stat-grid');
     const cells: [string, string][] = [
-      ['Waves held', `${sum.waves}`],
-      ['Kills', fmtNum(sum.kills)],
-      ['Damage dealt', fmtNum(sum.damage)],
-      ['Ore mined', fmtNum(sum.ore)],
-      ['Essence rendered', fmtNum(sum.essence)],
-      ['Structures built', `${sum.built}`],
-      ['Structures lost', `${sum.lost}`],
-      ['Core integrity', `${Math.round(sum.corePct * 100)}%`],
-      ['Time', fmtTime(sum.time)],
+      [tr('screens.victory.stats.wavesHeld', 'Waves held'), `${sum.waves}`],
+      [tr('screens.victory.stats.kills', 'Kills'), fmtNum(sum.kills)],
+      [tr('screens.victory.stats.damageDealt', 'Damage dealt'), fmtNum(sum.damage)],
+      [tr('screens.victory.stats.oreMined', 'Ore mined'), fmtNum(sum.ore)],
+      [tr('screens.victory.stats.essenceRendered', 'Essence rendered'), fmtNum(sum.essence)],
+      [tr('screens.victory.stats.structuresBuilt', 'Structures built'), `${sum.built}`],
+      [structuresLostLabel, `${sum.lost}`],
+      [tr('screens.victory.stats.coreIntegrity', 'Core integrity'), `${Math.round(sum.corePct * 100)}%`],
+      [tr('screens.victory.stats.time', 'Time'), fmtTime(sum.time)],
     ];
     for (const [k, v] of cells) {
       const c = el('div', 'cell');
       c.appendChild(el('div', 'label', k));
       const v2 = el('div', 'v accent', v);
-      if (k === 'Structures lost' && sum.lost === 0) v2.style.color = 'var(--good)';
+      if (k === structuresLostLabel && sum.lost === 0) v2.style.color = 'var(--good)';
       c.appendChild(v2);
       grid.appendChild(c);
     }
@@ -845,13 +934,16 @@ export class Screens {
 
     if (sum.tech.length) {
       const p = el('p', 'flavor');
-      p.innerHTML = `<strong>Run tech:</strong> ${sum.tech.map((t) => t.name).join(' · ')}`;
+      p.innerHTML = tr('screens.victory.runTech', '<strong>Run tech:</strong> {list}',
+        { list: sum.tech.map((t) => techName(t)).join(' · ') });
       stack.appendChild(p);
     }
 
     const col = el('div', 'menu-col');
-    if (!isFinalSector) col.appendChild(this.button('Advance to next sector', () => this.cb.onNextLevel()));
-    col.appendChild(this.button('Return to title', () => this.cb.onQuitToTitle(), 'btn ghost'));
+    if (!isFinalSector) {
+      col.appendChild(this.button(tr('screens.victory.advance', 'Advance to next sector'), () => this.cb.onNextLevel()));
+    }
+    col.appendChild(this.button(tr('screens.victory.returnToTitle', 'Return to title'), () => this.cb.onQuitToTitle(), 'btn ghost'));
     stack.appendChild(col);
 
     s.appendChild(stack);
@@ -865,8 +957,12 @@ export class Screens {
     const s = el('div', 'screen opaque');
     const stack = el('div', 'stack');
 
-    stack.appendChild(el('p', 'subtitle', endless ? 'run over' : 'core breach'));
-    const h = el('h2', undefined, endless ? `Wave ${sum.wave}` : 'The Line Broke');
+    stack.appendChild(el('p', 'subtitle', endless
+      ? tr('screens.defeat.subtitleEndless', 'run over')
+      : tr('screens.defeat.subtitleSector', 'core breach')));
+    const h = el('h2', undefined, endless
+      ? tr('screens.defeat.titleEndless', 'Wave {wave}', { wave: sum.wave })
+      : tr('screens.defeat.titleSector', 'The Line Broke'));
     h.style.color = endless && rec?.isRecord ? 'var(--relic)' : 'var(--danger)';
     stack.appendChild(h);
 
@@ -874,33 +970,39 @@ export class Screens {
       if (rec?.isRecord) {
         const nb = el('p', 'flavor');
         nb.style.color = 'var(--relic)';
-        nb.innerHTML = `★ <strong>New personal best</strong> on ${sum.level.name}.`;
+        nb.innerHTML = tr('screens.defeat.newRecord', '★ <strong>New personal best</strong> on {level}.',
+          { level: levelName(sum.level) });
         stack.appendChild(nb);
       } else if (rec) {
         stack.appendChild(el('p', 'flavor',
-          `Your best on ${sum.level.name} is still wave ${rec.best}.`));
+          tr('screens.defeat.bestStill', 'Your best on {level} is still wave {best}.',
+            { level: levelName(sum.level), best: rec.best })));
       }
     } else {
       stack.appendChild(el('p', 'flavor',
-        `The core went dark on wave ${sum.wave} of ${sum.waves}. Achievement progress is kept — ` +
-        'the bonuses you earned here make the next attempt easier.'));
+        tr('screens.defeat.coreWentDark',
+          'The core went dark on wave {wave} of {total}. Achievement progress is kept — ' +
+          'the bonuses you earned here make the next attempt easier.',
+          { wave: sum.wave, total: sum.waves })));
     }
     if (game.progress.relics > 0) {
       const relic = el('p', 'flavor');
       relic.style.color = 'var(--relic)';
-      relic.innerHTML = `⬢ <strong>${game.progress.relics} relics banked.</strong> ` +
-        'The Armoury turns them into permanent upgrades — and the next map will be a different one.';
+      relic.innerHTML = tr('screens.defeat.relicsBanked',
+        '⬢ <strong>{relics} relics banked.</strong> ' +
+        'The Armoury turns them into permanent upgrades — and the next map will be a different one.',
+        { relics: game.progress.relics });
       stack.appendChild(relic);
     }
 
     const grid = el('div', 'stat-grid');
     const cells: [string, string][] = [
-      ['Reached wave', endless ? `${sum.wave}` : `${sum.wave} / ${sum.waves}`],
-      ['Kills', fmtNum(sum.kills)],
-      ['Ore mined', fmtNum(sum.ore)],
-      ['Structures lost', `${sum.lost}`],
-      ['Damage dealt', fmtNum(sum.damage)],
-      ['Time', fmtTime(sum.time)],
+      [tr('screens.defeat.stats.reachedWave', 'Reached wave'), endless ? `${sum.wave}` : `${sum.wave} / ${sum.waves}`],
+      [tr('screens.defeat.stats.kills', 'Kills'), fmtNum(sum.kills)],
+      [tr('screens.defeat.stats.oreMined', 'Ore mined'), fmtNum(sum.ore)],
+      [tr('screens.defeat.stats.structuresLost', 'Structures lost'), `${sum.lost}`],
+      [tr('screens.defeat.stats.damageDealt', 'Damage dealt'), fmtNum(sum.damage)],
+      [tr('screens.defeat.stats.time', 'Time'), fmtTime(sum.time)],
     ];
     for (const [k, v] of cells) {
       const c = el('div', 'cell');
@@ -911,8 +1013,11 @@ export class Screens {
     stack.appendChild(grid);
 
     const col = el('div', 'menu-col');
-    col.appendChild(this.button(endless ? 'Run it again' : 'Retry sector', () => this.cb.onRestart()));
-    col.appendChild(this.button('Return to title', () => this.cb.onQuitToTitle(), 'btn ghost'));
+    col.appendChild(this.button(
+      endless ? tr('screens.defeat.runAgain', 'Run it again') : tr('screens.defeat.retrySector', 'Retry sector'),
+      () => this.cb.onRestart(),
+    ));
+    col.appendChild(this.button(tr('screens.defeat.returnToTitle', 'Return to title'), () => this.cb.onQuitToTitle(), 'btn ghost'));
     stack.appendChild(col);
 
     s.appendChild(stack);

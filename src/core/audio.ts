@@ -31,6 +31,10 @@ export class AudioEngine {
   volumes: Record<Bus, number> = { sfx: 0.85, music: 0.5, ui: 0.7 };
   muted = false;
 
+  // --- crowding ---
+  /** Recent play timestamps per sfx, used to duck stacked fire into a mix instead of a wall. */
+  private recentPlays: Partial<Record<SfxName, number[]>> = {};
+
   // --- music state ---
   private musicTimer = 0;
   private step = 0;
@@ -95,6 +99,19 @@ export class AudioEngine {
   }
 
   private get t() { return this.ctx!.currentTime; }
+
+  /**
+   * Volume multiplier that drops as copies of `name` pile up within `window`
+   * seconds. A dozen turrets firing at once should read as a dense mix, not a
+   * dozen full-volume clicks stacked into a solid drone.
+   */
+  private crowding(name: SfxName, window = 0.15): number {
+    const now = this.t;
+    const list = (this.recentPlays[name] ??= []);
+    while (list.length && now - list[0] > window) list.shift();
+    list.push(now);
+    return 1 / (1 + (list.length - 1) * 0.3);
+  }
 
   /** Reserve a polyphony slot; returns false when the voice should be dropped. */
   private take(dur: number): boolean {
@@ -187,29 +204,37 @@ export class AudioEngine {
     const v = variance;
 
     switch (name) {
-      case 'shoot':
+      case 'shoot': {
         if (!this.take(0.12)) return;
-        this.tone('sfx', 'square', 620 * v, 160, 0.07, 0.14);
-        this.burst('sfx', 0.05, 0.1, 'highpass', 1400, 700);
+        const a = this.crowding(name);
+        this.tone('sfx', 'square', 620 * v, 160, 0.07, 0.14 * a);
+        this.burst('sfx', 0.05, 0.1 * a, 'highpass', 1400, 700);
         break;
+      }
 
-      case 'shootHeavy':
+      case 'shootHeavy': {
         if (!this.take(0.3)) return;
-        this.tone('sfx', 'sawtooth', 210 * v, 48, 0.22, 0.3);
-        this.burst('sfx', 0.14, 0.24, 'lowpass', 1800, 240);
+        const a = this.crowding(name);
+        this.tone('sfx', 'sawtooth', 210 * v, 48, 0.22, 0.3 * a);
+        this.burst('sfx', 0.14, 0.24 * a, 'lowpass', 1800, 240);
         break;
+      }
 
-      case 'laser':
+      case 'laser': {
         if (!this.take(0.2)) return;
-        this.tone('sfx', 'sawtooth', 1500 * v, 420, 0.13, 0.1);
-        this.tone('sfx', 'sine', 2600 * v, 900, 0.09, 0.05);
+        const a = this.crowding(name);
+        this.tone('sfx', 'sawtooth', 1500 * v, 420, 0.13, 0.1 * a);
+        this.tone('sfx', 'sine', 2600 * v, 900, 0.09, 0.05 * a);
         break;
+      }
 
-      case 'tesla':
+      case 'tesla': {
         if (!this.take(0.25)) return;
-        this.burst('sfx', 0.18, 0.22, 'bandpass', 4200, 1100, 6);
-        this.tone('sfx', 'square', 900 * v, 2400, 0.05, 0.06);
+        const a = this.crowding(name);
+        this.burst('sfx', 0.18, 0.22 * a, 'bandpass', 4200, 1100, 6);
+        this.tone('sfx', 'square', 900 * v, 2400, 0.05, 0.06 * a);
         break;
+      }
 
       case 'hit':
         if (!this.take(0.08)) return;

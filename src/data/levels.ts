@@ -1,4 +1,5 @@
 import type { BuildingKind } from './buildings';
+import { t } from '../core/i18n';
 
 /**
  * Campaign definition. Each level is a biome with its own palette, terrain
@@ -203,6 +204,21 @@ export const LEVELS: LevelDef[] = [
     briefing: 'Where it all comes from. Five gates, no mercy, and the World-Eater at the end of it. Everything you have unlocked, you will need.',
   },
 ];
+
+/** Localised display name. English text above is the source of truth and fallback. */
+export function levelName(lv: LevelDef): string {
+  return t(`level.${lv.id}.name`, lv.name);
+}
+
+/** Localised sector/biome subtitle line. */
+export function levelSubtitle(lv: LevelDef): string {
+  return t(`level.${lv.id}.subtitle`, lv.subtitle);
+}
+
+/** Localised deployment briefing paragraph. */
+export function levelBriefing(lv: LevelDef): string {
+  return t(`level.${lv.id}.briefing`, lv.briefing);
+}
 
 /** Wave composition weights ramp across a level: early waves lean on tier-1. */
 export function waveBudget(level: LevelDef, wave: number): number {

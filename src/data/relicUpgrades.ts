@@ -1,4 +1,5 @@
 import type { PerkDelta } from './perks';
+import { t } from '../core/i18n';
 
 /**
  * Permanent, cross-run upgrades bought with Relics.
@@ -177,3 +178,23 @@ export function totalCost(u: RelicUpgrade): number {
 
 export const CATEGORY_ORDER: UpgradeCategory[] =
   ['core', 'turrets', 'economy', 'chassis', 'doctrine'];
+
+/** Localised display name. English text above is the source of truth and fallback. */
+export function relicUpgradeName(u: RelicUpgrade): string {
+  return t(`relicUpgrade.${u.id}.name`, u.name);
+}
+
+/** Localised effect description. */
+export function relicUpgradeDesc(u: RelicUpgrade): string {
+  return t(`relicUpgrade.${u.id}.desc`, u.desc);
+}
+
+/** Localised category heading, e.g. for the armoury's section tabs. */
+export function categoryLabel(cat: UpgradeCategory): string {
+  return t(`relicUpgrade.category.${cat}.label`, CATEGORY_LABEL[cat]);
+}
+
+/** Localised one-line category blurb. */
+export function categoryBlurb(cat: UpgradeCategory): string {
+  return t(`relicUpgrade.category.${cat}.blurb`, CATEGORY_BLURB[cat]);
+}

@@ -4,6 +4,8 @@ import { Input } from './core/input';
 import { saveNow, clearRun } from './core/save';
 import { BUILDINGS } from './data/buildings';
 import { LEVELS } from './data/levels';
+import { achievementName, achievementDesc } from './data/achievements';
+import { levelName } from './data/levels';
 import type { TechCard } from './data/tech';
 import { Game } from './game/game';
 import { Hud } from './render/hud';
@@ -12,6 +14,7 @@ import { Screens, type ResumeInfo } from './ui/screens';
 import { TouchInput } from './core/touch';
 import { TouchHud } from './render/touchHud';
 import { detectCoarsePointer, detectQuality, isPortrait, type Quality } from './core/platform';
+import { detectLocale, setLocale, getLocale, t } from './core/i18n';
 
 /**
  * Application shell.
@@ -110,12 +113,19 @@ const screens = new Screens(uiRoot, {
   },
 });
 
+const rotateMsg = document.getElementById('rotate-msg');
+const rotateSub = document.getElementById('rotate-sub');
+
 function applySettings() {
   const s = game.progress.data.settings;
   audio.setVolume('sfx', s.sfx);
   audio.setVolume('music', s.music);
   audio.setVolume('ui', s.ui);
   audio.setMuted(s.muted);
+  setLocale(s.locale === 'auto' ? detectLocale() : s.locale);
+  document.documentElement.lang = getLocale();
+  if (rotateMsg) rotateMsg.textContent = t('main.rotate.msg', 'Rotate your device');
+  if (rotateSub) rotateSub.textContent = t('main.rotate.sub', 'SWARM is played in landscape');
 }
 
 /* -------------------------------------------------------------------------- */
@@ -126,8 +136,9 @@ function applySettings() {
 function resumeInfo(): ResumeInfo | null {
   const snap = Game.loadSnapshot();
   if (!snap) return null;
+  const lv = LEVELS[snap.levelIndex];
   return {
-    levelName: LEVELS[snap.levelIndex]?.name ?? 'Unknown sector',
+    levelName: lv ? levelName(lv) : t('main.resume.unknownSector', 'Unknown sector'),
     wave: snap.waveIndex + 1,
     endless: snap.mode === 'endless',
   };
@@ -505,7 +516,7 @@ function frame(now: number) {
   // Surface achievement unlocks whenever they land.
   while (game.progress.pending.length) {
     const n = game.progress.pending.shift()!;
-    screens.toast(n.def.icon, n.def.name, n.def.desc);
+    screens.toast(n.def.icon, achievementName(n.def), achievementDesc(n.def));
     audio.play('achievement');
   }
 
