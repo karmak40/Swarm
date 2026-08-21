@@ -46,7 +46,12 @@ export class TouchHud {
     else this.drawerSlots.length = 0;
     for (const b of touch.buttons) this.button(ctx, game, touch, b);
     if (this.menu) this.contextMenu(ctx, game, w, h);
-    if (touch.placing) this.placementHint(ctx, game, w, h, touch);
+    if (touch.placing) {
+      this.placementHint(ctx, game, w, h, touch);
+    } else if (!touch.drawerOpen && !this.menu && game.cursorMode === 'normal'
+      && game.nearbyMineNode && game.player.miningNode === -1) {
+      this.mineHint(ctx, w, h, touch);
+    }
 
     ctx.restore();
   }
@@ -100,9 +105,19 @@ export class TouchHud {
         tint = ready ? 0x5cf2a0 : 0x2f5680;
         break;
       case 'build':
-        glyph = touch.drawerOpen ? '×' : '⌂';
-        label = touch.drawerOpen ? tr('touchHud.button.close', 'CLOSE') : tr('touchHud.button.build', 'BUILD');
-        tint = touch.drawerOpen ? 0xffb347 : 0x46d8ff;
+        if (touch.drawerOpen) {
+          glyph = '×';
+          label = tr('touchHud.button.close', 'CLOSE');
+          tint = 0xffb347;
+        } else if (game.buildKind) {
+          glyph = '×';
+          label = tr('touchHud.button.cancel', 'CANCEL');
+          tint = 0xff4f5e;
+        } else {
+          glyph = '⌂';
+          label = tr('touchHud.button.build', 'BUILD');
+          tint = 0x46d8ff;
+        }
         break;
       case 'startWave':
         glyph = '▶';
@@ -260,6 +275,30 @@ export class TouchHud {
     ctx.lineWidth = 1;
     ctx.stroke();
     ctx.fillStyle = css(game.buildValid ? 0x9fe8ff : 0xff8090);
+    ctx.fillText(msg, w / 2, by + Math.round(15 * s));
+    void h;
+  }
+
+  /**
+   * "Hold to mine" prompt — mining now takes a deliberate hold near the seam
+   * (see TouchInput.mouseDown(2)) instead of firing automatically on
+   * proximity, so a brand-new gesture needs to announce itself somehow.
+   */
+  private mineHint(ctx: Ctx, w: number, h: number, touch: TouchInput) {
+    const s = touch.scale;
+    const msg = tr('touchHud.mine.holdToMine', 'HOLD ON SEAM TO MINE');
+    ctx.textAlign = 'center';
+    ctx.font = `600 ${Math.round(13 * s)}px ${UI_FONT}`;
+    const tw = ctx.measureText(msg).width;
+    const bx = w / 2 - tw / 2 - 16;
+    const by = Math.round(96 * s);
+    ctx.fillStyle = 'rgba(4,7,12,0.9)';
+    techRect(ctx, bx, by, tw + 32, Math.round(30 * s), 8);
+    ctx.fill();
+    ctx.strokeStyle = rgba(0x7fd9ff, 0.6);
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = css(0x9fe8ff);
     ctx.fillText(msg, w / 2, by + Math.round(15 * s));
     void h;
   }

@@ -1,8 +1,21 @@
 import { Rng, ValueNoise, clamp, dist, dist2, TAU } from '../core/math';
 import { FlowField } from '../engine/flowfield';
 import type { LevelDef } from '../data/levels';
+import { ENEMIES } from '../data/enemies';
 
 export const TILE = 32;
+
+/** Largest boss collision radius on the roster (px) — see carveCorridor. */
+const MAX_BOSS_RADIUS = Math.max(...Object.values(ENEMIES).filter((e) => e.boss).map((e) => e.radius));
+
+/**
+ * Corridor stamp radius floor, in tiles. Two stamps 1.1 tiles apart can never
+ * pinch narrower than the stamp radius itself, whatever the turn's sharpness
+ * (circle geometry) — so keeping this at least the biggest boss's radius,
+ * plus margin, guarantees a corridor can never wedge that boss. See
+ * carveCorridor.
+ */
+const MIN_CORRIDOR_R = MAX_BOSS_RADIUS / TILE + 0.5;
 
 export const enum Tile {
   Ground = 0,
@@ -256,7 +269,7 @@ export class World {
       nx /= nl; ny /= nl;
       x += nx * 1.1;
       y += ny * 1.1;
-      this.carveDisc(x, y, rng.range(1.6, 2.7));
+      this.carveDisc(x, y, rng.range(MIN_CORRIDOR_R, MIN_CORRIDOR_R + 0.9));
     }
   }
 

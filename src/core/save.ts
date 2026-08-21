@@ -15,6 +15,8 @@ export interface SaveData {
   relicsEarned: number;
   /** Endless personal best: sector index → highest wave reached. */
   endlessBest: Record<string, number>;
+  /** Shown once, right before the player's first deployment. */
+  tutorialSeen: boolean;
   stats: {
     runs: number;
     victories: number;
@@ -68,6 +70,7 @@ export function emptySave(): SaveData {
     relicUpgrades: {},
     relicsEarned: 0,
     endlessBest: {},
+    tutorialSeen: false,
     stats: {
       runs: 0, victories: 0, kills: 0, bossKills: 0, oreMined: 0,
       essenceCollected: 0, buildingsBuilt: 0, wavesSurvived: 0,

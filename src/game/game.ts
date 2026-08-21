@@ -154,8 +154,11 @@ export class Game {
    * where there is no cursor to aim with; optional on desktop.
    */
   autoAim = false;
-  /** Mine the nearest seam in range with no button held. Required on touch. */
+  /** Mine the nearest seam in range with no button held. Opt-in everywhere. */
   autoMine = false;
+  /** Set from touch's control scheme. Nudges a few things a finger needs that a
+   *  cursor doesn't — e.g. lifting the build ghost out from under the thumb. */
+  touchUi = false;
   /** The enemy auto-aim is currently tracking, for the HUD lock indicator. */
   autoTarget: Enemy | null = null;
   cursorMode: CursorMode = 'normal';
@@ -165,6 +168,10 @@ export class Game {
   buildTy = 0;
   hoverBuilding: Building | null = null;
   hoverNode: OreNode | null = null;
+  /** Nearest unclaimed seam in mining range of the player, regardless of cursor
+   *  position — drives the touch "hold to mine" prompt, which has no cursor to
+   *  hover with between taps. */
+  nearbyMineNode: OreNode | null = null;
   mouseWorldX = 0;
   mouseWorldY = 0;
   lastError = { text: '', life: 0 };
@@ -448,10 +455,14 @@ export class Game {
 
     if (this.cursorMode === 'build' && this.buildKind) {
       const def = BUILDINGS[this.buildKind];
+      // On touch, the placement point sits right under the thumb doing the
+      // pointing — lift it clear so the ghost (and what's behind it) is
+      // actually visible. Desktop has a real cursor, so it needs none of this.
+      const pty = this.touchUi ? Math.floor((this.mouseWorldY - TILE * 2.2) / TILE) : hty;
       // Centre the footprint on the cursor for multi-tile structures.
       const off = Math.floor((def.size - 1) / 2);
       this.buildTx = htx - off;
-      this.buildTy = hty - off;
+      this.buildTy = pty - off;
       this.buildValid = this.canPlace(def, this.buildTx, this.buildTy) === null;
 
       if (input.mouseDown(0)) {
@@ -1053,6 +1064,8 @@ export class Game {
       return;
     }
 
+    const ax = input.uiCaptured ? { x: 0, y: 0 } : input.axis();
+
     if (this.autoAim) {
       // Track the nearest live threat. The turn rate is finite so a target
       // crossing behind you is not hit instantly — auto-aim assists, it does
@@ -1062,6 +1075,11 @@ export class Game {
       if (target) {
         const want = Math.atan2(target.y - p.y, target.x - p.x);
         p.aim = rotateToward(p.aim, want, dt * 14);
+      } else if (ax.x || ax.y) {
+        // Nothing to aim at — there's no mouse to point with either (this
+        // path is touch's), so face the way you're actually walking instead
+        // of leaving the sprite frozen on whatever it last aimed at.
+        p.aim = rotateToward(p.aim, Math.atan2(ax.y, ax.x), dt * 14);
       }
     } else {
       this.autoTarget = null;
@@ -1086,7 +1104,6 @@ export class Game {
     }
 
     const speed = 232 * this.perks.playerSpeed;
-    const ax = input.uiCaptured ? { x: 0, y: 0 } : input.axis();
 
     // Dash.
     if (p.dashTime > 0) {
@@ -1149,10 +1166,11 @@ export class Game {
 
     // Mining.
     p.miningNode = -1;
+    this.nearbyMineNode = this.world.nearestNode(p.x, p.y, PLAYER_MINE_RANGE);
     if (this.autoMine) {
-      // Nothing to decide here — mining is strictly good — so on touch it just
-      // happens whenever a seam is in reach.
-      const node = this.world.nearestNode(p.x, p.y, PLAYER_MINE_RANGE);
+      // Nothing to decide here — mining is strictly good — so with the
+      // setting on, it just happens whenever a seam is in reach.
+      const node = this.nearbyMineNode;
       if (node) {
         p.miningNode = this.world.nodes.indexOf(node);
         this.mine(node, dt);
@@ -1951,7 +1969,23 @@ export class Game {
       }
 
       if (!e.flying && !e.submerged) {
+        const preCx = e.x, preCy = e.y;
         world.collideCircle(e, e.radius);
+        // A body squeezed by rock on both sides gets shoved hard back toward
+        // centre every single frame (unlike a normal corner graze, which only
+        // nudges it once). Sustained heavy shoving means it's wedged — most
+        // corridors are now generated wide enough for any boss (see
+        // world.ts's carveCorridor), but this is the backstop for whatever
+        // that guarantee doesn't reach (e.g. two carved features meeting).
+        const shoved2 = (e.x - preCx) * (e.x - preCx) + (e.y - preCy) * (e.y - preCy);
+        if (shoved2 > (e.radius * 0.5) * (e.radius * 0.5)) e.stuckTimer += dt;
+        else e.stuckTimer = Math.max(0, e.stuckTimer - dt * 2);
+        if (e.stuckTimer > 1.2) {
+          const out = world.findOpenNear(e.x, e.y);
+          e.x = out.x; e.y = out.y;
+          e.vx = 0; e.vy = 0;
+          e.stuckTimer = 0;
+        }
         // Belt and braces: if anything still ends the tick buried in rock (a
         // surfacing burrower, a hard knockback), it would be both immobile and
         // unhittable. Eject it to the nearest reachable tile instead.

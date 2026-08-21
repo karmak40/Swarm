@@ -64,10 +64,12 @@ function applyControlScheme() {
   hud.compact = touchMode;
   hud.uiScale = st.uiScale;
   hud.insets = renderer.insets;
-  // Touch has no cursor to aim with and no second button to mine with, so both
-  // assists are mandatory there; on desktop they are opt-in.
+  // Touch has no cursor to aim with, so this one is mandatory there; mining now
+  // has a real touch gesture (hold near a seam, see TouchInput.mouseDown(2)),
+  // so it stays an opt-in setting on every platform instead of being forced.
   game.autoAim = touchMode || st.autoAim;
-  game.autoMine = touchMode || st.autoMine;
+  game.autoMine = st.autoMine;
+  game.touchUi = touchMode;
   touch.setHaptics(st.haptics);
   touch.layout(renderer.width, renderer.height, { southpaw: st.southpaw, scale: st.uiScale, insets: renderer.insets });
   if (!touchMode) touch.reset();
@@ -210,8 +212,18 @@ function beginLevel(index: number, fresh: boolean, mode: 'campaign' | 'endless' 
   game.frozen = true;
   state = 'briefing';
   screens.showBriefing(game, () => {
-    state = 'playing';
-    game.frozen = false;
+    const startPlaying = () => { state = 'playing'; game.frozen = false; };
+    // Touch has no on-screen control legend anywhere else — desktop's title
+    // screen hint bar already covers WASD/mouse, so this only fires once, for
+    // touch, right before the very first deployment.
+    if (touchMode && !game.progress.data.tutorialSeen) {
+      game.progress.data.tutorialSeen = true;
+      saveNow(game.progress.data);
+      state = 'modal';
+      screens.showTutorial(startPlaying);
+    } else {
+      startPlaying();
+    }
   });
 }
 
@@ -383,11 +395,17 @@ function handleTouch() {
         screens.showPause(game.progress, game.inBuildPhase);
         break;
       case 'build':
-        touch.drawerOpen = true;
-        // Opening the drawer cancels any pending placement, so the two modes
-        // cannot both be live at once.
-        game.buildKind = null;
-        game.cursorMode = 'normal';
+        if (touch.drawerOpen) {
+          touch.drawerOpen = false;
+        } else if (game.buildKind) {
+          // A tool is already selected: cancel it in place instead of
+          // reopening the drawer — backing out of a placement shouldn't cost
+          // a second tap to then dismiss the drawer too.
+          game.buildKind = null;
+          game.cursorMode = 'normal';
+        } else {
+          touch.drawerOpen = true;
+        }
         touchHud.closeMenu();
         audio.play('uiClick');
         break;
@@ -435,7 +453,16 @@ function handleTouch() {
         game.buildKind = game.buildKind === kind ? null : kind;
         game.cursorMode = game.buildKind ? 'build' : 'normal';
         // Collapse so the map is visible for placement.
-        if (game.buildKind) touch.drawerOpen = false;
+        if (game.buildKind) {
+          touch.drawerOpen = false;
+          // The tap that picked the drawer slot already landed near the
+          // bottom of the screen and got recorded as a world position (drawer
+          // icons aren't real TouchInput buttons) — recentre it, or the very
+          // first placement ghost shows up under the drawer instead of where
+          // the player is standing.
+          touch.mouseX = renderer.width / 2;
+          touch.mouseY = renderer.height / 2;
+        }
         audio.play('uiClick');
         touch.consumeTap();
         return;

@@ -198,6 +198,15 @@ export class Enemy implements Body {
   burrowCooldown = 0;
   submerged = false;
 
+  /**
+   * Seconds spent being heavily shoved by terrain collision every frame —
+   * the signature of being wedged in rock too narrow for this body's radius
+   * (mainly a risk for bosses). See Game's enemy update loop, which resets
+   * this whenever the terrain push is small and teleports the unit free of
+   * whatever it's wedged in once this crosses a threshold.
+   */
+  stuckTimer = 0;
+
   /** Support aura pulse phase. */
   auraPhase = Math.random() * Math.PI * 2;
   /** Bosses: index → remaining cooldown, plus the active telegraph. */

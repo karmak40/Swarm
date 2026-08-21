@@ -324,8 +324,13 @@ export class TouchInput implements InputSource {
    * A pending tap counts as held: the finger is already up by the time the game
    * polls, and requiring a live contact would make quick taps place nothing while
    * only slow drags worked.
+   *
+   * Button 2 (mine) mirrors the desktop RMB-hold gesture as a plain map-hold,
+   * regardless of `placing` — mining only ever fires in `cursorMode === 'normal'`
+   * anyway (checked on the `Game` side), so this can't fire mid-placement.
    */
   mouseDown(button = 0) {
+    if (button === 2) return this.mapHeld;
     return button === 0 && this.placing && (this.mapHeld || this.mapTap !== null);
   }
 
