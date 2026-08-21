@@ -51,17 +51,17 @@
 	<array>
 		<string>armv7</string>
 	</array>
-	<!-- SWARM is landscape-only — mirrors the Android sensorLandscape lock and the
-	     "orientation": "landscape" already declared in manifest.webmanifest. -->
+	<!-- Experimental portrait layout — mirrors the Android sensorPortrait lock and
+	     the "orientation": "portrait" now in manifest.webmanifest. Was landscape
+	     only; flip back to LandscapeLeft/Right here (and sensorLandscape in the
+	     Android manifest) to revert. -->
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
+		<string>UIInterfaceOrientationPortrait</string>
 	</array>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
+		<string>UIInterfaceOrientationPortrait</string>
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>

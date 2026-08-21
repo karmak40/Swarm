@@ -15,7 +15,7 @@ import { TouchInput } from './core/touch';
 import { TouchHud } from './render/touchHud';
 import { detectCoarsePointer, detectQuality, isPortrait, type Quality } from './core/platform';
 import { detectLocale, setLocale, getLocale, t } from './core/i18n';
-import { hideStatusBar, lockLandscape, onBackButton, minimizeApp } from './core/native';
+import { hideStatusBar, lockOrientation, onBackButton, minimizeApp } from './core/native';
 
 /**
  * Application shell.
@@ -128,8 +128,11 @@ function applySettings() {
   audio.setMuted(s.muted);
   setLocale(s.locale === 'auto' ? detectLocale() : s.locale);
   document.documentElement.lang = getLocale();
+  // Experimental portrait layout: text flipped along with the gate itself in
+  // updateOrientationGate(). Translations still say "landscape" until this
+  // sticks — not worth touching 5 locale files for a reversible experiment.
   if (rotateMsg) rotateMsg.textContent = t('main.rotate.msg', 'Rotate your device');
-  if (rotateSub) rotateSub.textContent = t('main.rotate.sub', 'SWARM is played in landscape');
+  if (rotateSub) rotateSub.textContent = t('main.rotate.sub', 'SWARM is played in portrait');
 }
 
 /* -------------------------------------------------------------------------- */
@@ -457,14 +460,17 @@ function handleTouch() {
 let gateBlocked = false;
 
 /**
- * Shows the rotate prompt in portrait.
+ * Shows the rotate prompt in landscape.
+ *
+ * Experimental portrait layout: inverted from the original landscape-required
+ * gate rather than rewritten, so flipping back is a one-line change.
  *
  * Also polled from the render loop rather than trusting `resize` alone: some
  * browsers report stale dimensions during a rotation, and a stuck gate makes the
  * game look broken. The check is two number comparisons, so polling is free.
  */
 function updateOrientationGate() {
-  const block = touchMode && isPortrait();
+  const block = touchMode && !isPortrait();
   if (block === gateBlocked) return;
   gateBlocked = block;
   document.body.classList.toggle('portrait-block', block);
@@ -486,7 +492,7 @@ function updateOrientationGate() {
 async function tryFullscreen() {
   if (!touchMode) return;
   void hideStatusBar();
-  void lockLandscape();
+  void lockOrientation();
   if (document.fullscreenElement) return;
   try {
     await document.documentElement.requestFullscreen({ navigationUI: 'hide' });

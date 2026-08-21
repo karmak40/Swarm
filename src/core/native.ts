@@ -24,11 +24,16 @@ export async function hideStatusBar() {
   } catch { /* not supported on this platform */ }
 }
 
-/** Locks to landscape. Backed by the Screen Orientation Web API on the web. */
-export async function lockLandscape() {
+/**
+ * Locks orientation. Backed by the Screen Orientation Web API on the web.
+ * Currently 'portrait' for the layout experiment — was 'landscape'; flip
+ * this one string back to revert (matches AndroidManifest.xml's
+ * screenOrientation and Info.plist's UISupportedInterfaceOrientations).
+ */
+export async function lockOrientation() {
   try {
     const { ScreenOrientation } = await import('@capacitor/screen-orientation');
-    await ScreenOrientation.lock({ orientation: 'landscape' });
+    await ScreenOrientation.lock({ orientation: 'portrait' });
   } catch { /* denied or unsupported */ }
 }
 
