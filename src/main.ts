@@ -236,11 +236,6 @@ game.onDraft = (cards) => {
 /** True when the pointer is over canvas chrome, so world clicks are suppressed. */
 function overHud(x: number, y: number): boolean {
   const w = renderer.width, h = renderer.height;
-  if (touchMode) {
-    // On touch, TouchInput hit-tests its own widgets before the world ever sees
-    // the event, so only the information strip needs excluding here.
-    return y < 92 * game.progress.data.settings.uiScale;
-  }
   if (y < 116) return true;                       // top bar + wave tracker
   if (y > h - 112) return true;                   // build bar + legend
   if (x > w - 200 && y > h - 200) return true;    // minimap
@@ -308,11 +303,11 @@ addEventListener('keydown', (e) => {
 
 // Android hardware/gesture back button — a no-op listener registration on
 // web and iOS, since neither platform has an equivalent event.
-onBackButton(() => {
+void onBackButton(() => {
   if (state === 'playing' || state === 'paused') {
     togglePause();
   } else if (screens.current === null || screens.current === 'title') {
-    minimizeApp();
+    void minimizeApp();
   }
   // Any other modal screen (settings, achievements, level select, …): swallow
   // the press rather than guess a destination. Several of their own "Back"
@@ -618,7 +613,16 @@ function stepFrame(now: number) {
   hud.lastMouse.y = input.mouseY;
 
   const modal = screens.isModal;
-  input.uiCaptured = modal || (state === 'playing' && overHud(input.mouseX, input.mouseY));
+  // `overHud` reads the last known cursor position, which is only meaningful for
+  // a mouse — it tracks continuously even when nothing is pressed. Touch has no
+  // such thing: `TouchInput.mouseX/Y` only move on an actual world tap, so they
+  // sit at their (0, 0) default — inside the top info strip — until the first
+  // one ever lands. Gating on `overHud` here would keep uiCaptured stuck true
+  // from frame one, and since it also zeroes movement/dash in Game.update, that
+  // reads as "touch controls don't work" — not just "one accidental tap ignored".
+  // TouchInput already hit-tests its own buttons and stick zone before any of
+  // this runs, so it doesn't need the overHud check at all.
+  input.uiCaptured = modal || (!touchMode && state === 'playing' && overHud(input.mouseX, input.mouseY));
   if (modal && touchMode) touch.reset();
 
   handleTouch();

@@ -216,6 +216,10 @@ export class TouchInput implements InputSource {
       return;
     }
 
+    // The resource readout along the very top isn't a button, but a tap there
+    // shouldn't mine or place a structure underneath it either.
+    if (y < 92 * this.scale) return;
+
     // Anything else is a world interaction.
     this.pointers.set(e.pointerId, { x, y, startX: x, startY: y, t: Date.now(), role: 'map' });
     this.mouseX = x;
