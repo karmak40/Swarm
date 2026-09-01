@@ -1,5 +1,6 @@
 import type { BuildingDef, BuildingKind, TargetingMode } from '../data/buildings';
 import type { EnemyDef } from '../data/enemies';
+import type { WeaponKind } from '../data/loadout';
 
 /** Everything in the world shares these fields so systems can treat them alike. */
 export interface Body {
@@ -41,8 +42,6 @@ export class Core implements Body {
 
 /* -------------------------------------------------------------------------- */
 
-export type WeaponMode = 'rifle' | 'shotgun' | 'railgun';
-
 export class Player implements Body {
   x: number;
   y: number;
@@ -66,7 +65,11 @@ export class Player implements Body {
   dashTime = 0;
   dashDirX = 0;
   dashDirY = 0;
-  weapon: WeaponMode = 'rifle';
+  /** Bought mid-run with essence — see data/loadout.ts and Game.buyWeapon. */
+  weapon: WeaponKind = 'rifle';
+  weaponsOwned: Set<WeaponKind> = new Set<WeaponKind>(['rifle']);
+  /** Bought mid-run with essence — see data/loadout.ts and Game.buyArmorTier. */
+  armorTier = 0;
   /** Walk-cycle phase for the leg animation. */
   stride = 0;
   recoil = 0;
@@ -103,6 +106,18 @@ export class Building implements Body {
   maxHp: number;
   shield = 0;
   maxShield = 0;
+
+  /**
+   * Force Field only (see BuildingDef.fieldHp): the dome's own hp pool while
+   * charging or holding. `fieldChargeTimer > 0` means charging/recharging;
+   * `fieldChargeTotal` is that cycle's full duration, so the renderer can
+   * show progress without re-deriving which of chargeTime/rechargeTime is
+   * currently in effect. See Game.updateForceField / popForceField.
+   */
+  fieldHp = 0;
+  fieldMaxHp = 0;
+  fieldChargeTimer = 0;
+  fieldChargeTotal = 0;
 
   /** 0..1; the structure is inert until it reaches 1. */
   progress = 0;
@@ -252,7 +267,7 @@ export class Enemy implements Body {
     return this.speed * (this.slowTimer > 0 ? this.slowFactor : 1);
   }
 
-  get flying() { return this.def.behavior === 'flyer'; }
+  get flying() { return this.def.behavior === 'flyer' || !!this.def.flies; }
   get targetable() { return !this.dead && !this.submerged; }
 }
 

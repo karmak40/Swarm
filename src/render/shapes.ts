@@ -91,12 +91,11 @@ export interface EnemyDrawState {
   casting: boolean;
 }
 
+/** Assumes the caller has already translated+rotated `ctx` to the enemy's frame. */
 export function drawEnemy(ctx: Ctx, s: EnemyDrawState) {
   const body = s.flash > 0 ? lighten(s.color, s.flash * 0.75) : s.color;
   const edge = s.elite ? 0xffcc55 : s.accent;
 
-  ctx.save();
-  ctx.rotate(s.angle);
   if (s.submerged) ctx.globalAlpha = 0.28;
 
   switch (s.shape) {
@@ -109,10 +108,11 @@ export function drawEnemy(ctx: Ctx, s: EnemyDrawState) {
     case 'burrower': drawBurrower(ctx, s, body, edge); break;
     case 'shaman': drawShaman(ctx, s, body, edge); break;
     case 'blob': drawBlob(ctx, s, body, edge); break;
+    case 'queen': drawQueen(ctx, s, body, edge); break;
+    case 'scorpion': drawScorpion(ctx, s, body, edge); break;
+    case 'wasp': drawWasp(ctx, s, body, edge); break;
     case 'boss': drawBoss(ctx, s, body, edge); break;
   }
-
-  ctx.restore();
 }
 
 function legs(ctx: Ctx, r: number, gait: number, count: number, spread: number, color: number, width: number) {
@@ -218,6 +218,54 @@ function drawBrute(ctx: Ctx, s: EnemyDrawState, body: number, edge: number) {
   }
 }
 
+/** Sand Scorpion — low wide carapace, forward pincers, a tail that flares before a charge. */
+function drawScorpion(ctx: Ctx, s: EnemyDrawState, body: number, edge: number) {
+  const r = s.r;
+  legs(ctx, r, s.gait, 4, 0.55, darken(body, 0.35), Math.max(1.2, r * 0.09));
+
+  // Low, wide carapace.
+  ctx.fillStyle = css(body);
+  ctx.beginPath();
+  ctx.ellipse(0, 0, r * 0.85, r * 0.55, 0, 0, TAU);
+  ctx.fill();
+  ctx.fillStyle = css(darken(body, 0.25));
+  ctx.beginPath();
+  ctx.ellipse(0, 0, r * 0.6, r * 0.36, 0, 0, TAU);
+  ctx.fill();
+
+  // Pincers, up front.
+  ctx.strokeStyle = css(lighten(body, 0.25));
+  ctx.lineWidth = Math.max(1.6, r * 0.14);
+  ctx.lineCap = 'round';
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(r * 0.55, side * r * 0.3);
+    ctx.quadraticCurveTo(r * 1.15, side * r * 0.55, r * 1.0, side * r * 0.15);
+    ctx.stroke();
+  }
+
+  // Tail, curling up and over — flares brighter while she winds up a charge.
+  const flare = s.casting ? 1 : 0.55;
+  ctx.strokeStyle = rgba(edge, flare);
+  ctx.lineWidth = Math.max(1.4, r * 0.16);
+  ctx.beginPath();
+  ctx.moveTo(-r * 0.7, 0);
+  ctx.bezierCurveTo(-r * 1.3, -r * 0.3, -r * 1.15, -r * 1.15, -r * 0.4, -r * 1.05);
+  ctx.stroke();
+  ctx.fillStyle = rgba(edge, Math.min(1, flare + 0.2));
+  ctx.beginPath();
+  ctx.arc(-r * 0.4, -r * 1.05, r * (s.casting ? 0.22 : 0.16), 0, TAU);
+  ctx.fill();
+
+  // Eyes.
+  ctx.fillStyle = css(0x0a0a0f);
+  for (const sy of [-0.2, 0.2]) {
+    ctx.beginPath();
+    ctx.arc(r * 0.5, sy * r * 0.5, r * 0.08, 0, TAU);
+    ctx.fill();
+  }
+}
+
 function drawSpitter(ctx: Ctx, s: EnemyDrawState, body: number, edge: number) {
   const r = s.r;
   legs(ctx, r, s.gait, 2, 0.6, darken(body, 0.4), r * 0.16);
@@ -273,6 +321,49 @@ function drawMoth(ctx: Ctx, s: EnemyDrawState, body: number, edge: number) {
     ctx.quadraticCurveTo(r * 1.3, side * r * 0.5, r * 1.5, side * r * 0.2);
     ctx.stroke();
   }
+}
+
+/** Void Wasp — waisted banded body, a stinger tail, quicker narrower wings than the Moth. */
+function drawWasp(ctx: Ctx, s: EnemyDrawState, body: number, edge: number) {
+  const r = s.r;
+  const flap = Math.abs(Math.sin(s.anim * 22));
+  ctx.fillStyle = rgba(edge, 0.25 + flap * 0.25);
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(r * 0.1, 0);
+    ctx.quadraticCurveTo(-r * 0.3, side * r * (0.5 + flap * 1.1), -r * 0.9, side * r * (0.25 + flap * 0.5));
+    ctx.quadraticCurveTo(-r * 0.3, side * r * 0.1, r * 0.1, 0);
+    ctx.fill();
+  }
+  // Thorax and abdomen, joined by a narrow waist.
+  ctx.fillStyle = css(body);
+  ctx.beginPath();
+  ctx.ellipse(r * 0.35, 0, r * 0.4, r * 0.32, 0, 0, TAU);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(-r * 0.5, 0, r * 0.55, r * 0.34, 0, 0, TAU);
+  ctx.fill();
+  // Warning bands.
+  ctx.strokeStyle = rgba(edge, 0.85);
+  ctx.lineWidth = Math.max(1, r * 0.11);
+  for (const bx of [-0.25, -0.55, -0.85]) {
+    ctx.beginPath();
+    ctx.moveTo(r * bx, -r * 0.3);
+    ctx.lineTo(r * bx, r * 0.3);
+    ctx.stroke();
+  }
+  // Stinger.
+  ctx.fillStyle = css(edge);
+  ctx.beginPath();
+  ctx.moveTo(-r * 1.02, -r * 0.08);
+  ctx.lineTo(-r * 1.35, 0);
+  ctx.lineTo(-r * 1.02, r * 0.08);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = css(0x0a0a0f);
+  ctx.beginPath();
+  ctx.arc(r * 0.55, 0, r * 0.12, 0, TAU);
+  ctx.fill();
 }
 
 function drawBomber(ctx: Ctx, s: EnemyDrawState, body: number, edge: number) {
@@ -350,6 +441,54 @@ function drawShaman(ctx: Ctx, s: EnemyDrawState, body: number, edge: number) {
   ctx.fillStyle = css(edge);
   poly(ctx, 3, r * 0.36, s.anim * 1.5);
   ctx.fill();
+}
+
+/** Broodmother — bloated egg-sac trailing behind a small mandibled head. */
+function drawQueen(ctx: Ctx, s: EnemyDrawState, body: number, edge: number) {
+  const r = s.r;
+  legs(ctx, r * 0.65, s.gait, 2, 0.22, darken(body, 0.4), r * 0.14);
+
+  // Distended abdomen, trailing behind — swells and glows while she casts.
+  const pulse = s.casting ? 1 + Math.sin(s.anim * 16) * 0.06 : 1;
+  ctx.fillStyle = css(darken(body, 0.1));
+  ctx.beginPath();
+  ctx.ellipse(-r * 0.35, 0, r * 0.95 * pulse, r * 0.78 * pulse, 0, 0, TAU);
+  ctx.fill();
+
+  // Egg pods visible through the carapace, brighter mid-cast.
+  ctx.fillStyle = rgba(edge, s.casting ? 0.85 : 0.5);
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * TAU + s.anim * 0.4;
+    const ex = -r * 0.35 + Math.cos(a) * r * 0.5;
+    const ey = Math.sin(a) * r * 0.4;
+    ctx.beginPath();
+    ctx.arc(ex, ey, r * 0.14, 0, TAU);
+    ctx.fill();
+  }
+
+  // Small thorax and head up front.
+  ctx.fillStyle = css(body);
+  ctx.beginPath();
+  ctx.ellipse(r * 0.45, 0, r * 0.42, r * 0.32, 0, 0, TAU);
+  ctx.fill();
+
+  ctx.fillStyle = css(edge);
+  for (const sy of [-0.16, 0.16]) {
+    ctx.beginPath();
+    ctx.arc(r * 0.72, sy * r, r * 0.09, 0, TAU);
+    ctx.fill();
+  }
+
+  // Mandibles.
+  ctx.strokeStyle = css(lighten(body, 0.3));
+  ctx.lineWidth = Math.max(1.2, r * 0.08);
+  ctx.lineCap = 'round';
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(r * 0.75, side * r * 0.18);
+    ctx.quadraticCurveTo(r * 1.05, side * r * 0.3, r * 0.95, side * r * 0.05);
+    ctx.stroke();
+  }
 }
 
 function drawBlob(ctx: Ctx, s: EnemyDrawState, body: number, edge: number) {
@@ -466,13 +605,13 @@ export interface DroneDrawState {
   working: boolean;
 }
 
-/** Small hover frame: four rotor discs, a slung cargo pod, a sensor eye. */
+/**
+ * Small hover frame: four rotor discs, a slung cargo pod, a sensor eye.
+ * Assumes the caller has already translated+rotated `ctx` to the drone's frame.
+ */
 export function drawDrone(ctx: Ctx, s: DroneDrawState) {
   const r = s.r;
   const body = s.flash > 0 ? lighten(0x3d4c60, s.flash * 0.8) : 0x3d4c60;
-
-  ctx.save();
-  ctx.rotate(s.angle);
 
   // Rotor discs — blurred by drawing a translucent ring, no per-blade detail.
   const spin = s.anim * 26;
@@ -517,8 +656,6 @@ export function drawDrone(ctx: Ctx, s: DroneDrawState) {
   ctx.beginPath();
   ctx.arc(r * 0.4, 0, r * 0.13, 0, TAU);
   ctx.fill();
-
-  ctx.restore();
 }
 
 /* -------------------------------------------------------------------------- */
@@ -574,6 +711,7 @@ export function drawBuilding(ctx: Ctx, b: Building, accent: number, time: number
     case 'dronebay': drawDroneBay(ctx, half, b, time, accent); break;
     case 'repairbay': drawRepairBay(ctx, half, time); break;
     case 'shield': drawShieldPylon(ctx, half, time); break;
+    case 'forcefield': drawForceFieldEmitter(ctx, half, b, time); break;
     default: drawTurretBody(ctx, b, half, accent); break;
   }
 
@@ -744,6 +882,23 @@ function drawShieldPylon(ctx: Ctx, half: number, time: number) {
   ctx.fillStyle = rgba(0xffffff, 0.6 + Math.sin(time * 5) * 0.3);
   ctx.beginPath();
   ctx.arc(0, 0, half * 0.16, 0, TAU);
+  ctx.fill();
+}
+
+/** Field Emitter — hex base, a spinning frame that steadies and brightens once the dome is up. */
+function drawForceFieldEmitter(ctx: Ctx, half: number, b: Building, time: number) {
+  ctx.fillStyle = css(0x101a2c);
+  poly(ctx, 6, half * 0.72, 0);
+  ctx.fill();
+  const active = b.fieldHp > 0;
+  const glow = active ? 0.7 + Math.sin(time * 3) * 0.2 : 0.22 + Math.sin(time * 7) * 0.14;
+  ctx.strokeStyle = rgba(0x9fd8ff, glow);
+  ctx.lineWidth = 2;
+  poly(ctx, 4, half * 0.5, time * (active ? 0.4 : 1.4));
+  ctx.stroke();
+  ctx.fillStyle = rgba(0xffffff, active ? 0.75 : 0.3);
+  ctx.beginPath();
+  ctx.arc(0, 0, half * 0.15, 0, TAU);
   ctx.fill();
 }
 

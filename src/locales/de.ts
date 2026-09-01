@@ -41,6 +41,10 @@ export const de: Record<string, string> = {
   'building.repairbay.desc': 'Repariert kontinuierlich alle Gebäude in Reichweite, sich selbst eingeschlossen.',
   'building.shield.name': 'Ägis-Pylon',
   'building.shield.desc': 'Hüllt nahe Gebäude in eine sich regenerierende Barriere, die Treffer zuerst abfängt.',
+  'building.forcefield.name': 'Feldemitter',
+  'building.forcefield.desc': 'Errichtet eine Kuppel, die Fernbeschuss abfängt — Nahkampf kommt trotzdem durch. '
+    + 'Braucht Energie zum Aufladen, mehr zum Halten; genug eingehender Schaden lässt sie zusammenbrechen, und '
+    + 'jede Wiederaufladung danach dauert länger als die erste.',
 
   /* ------------------------------------------------------------------ */
   /* enemies                                                              */
@@ -64,6 +68,12 @@ export const de: Record<string, string> = {
   'enemy.blob.name': 'Spalter',
   'enemy.blob.desc': 'Zerplatzt beim Tod in drei kleinere Klumpen.',
   'enemy.blobling.name': 'Klümpchen',
+  'enemy.queen.name': 'Brutmutter',
+  'enemy.queen.desc': 'Kämpft nie selbst. Alle paar Sekunden spuckt sie frische Brut aus — erledigt sie schnell, sonst dünnt die Welle nie aus.',
+  'enemy.scorpion.name': 'Sandskorpion',
+  'enemy.scorpion.desc': 'Nähert sich in stetigem Tempo, richtet sich dann auf und stürmt mit dem Stachel zum Kern. Die Vorbereitung ist die einzige Warnung.',
+  'enemy.wasp.name': 'Leerenwespe',
+  'enemy.wasp.desc': 'Fliegt und hält dabei Abstand, während sie sticht — der erste Flieger, der nicht einfach näherkommt, um im Nahkampf zuzuschlagen.',
   'enemy.tyrant.name': 'SCHWARMTYRANN',
   'enemy.tyrant.desc': 'Die Bruthüterin. Rammt den Boden und speit frische Drohnen aus.',
   'enemy.devourer.name': 'DER VERSCHLINGER',
@@ -236,6 +246,40 @@ export const de: Record<string, string> = {
     + 'Ihr werdet alles brauchen, was ihr freigeschaltet habt.',
 
   /* ------------------------------------------------------------------ */
+  /* biomes & freies Gefecht (skirmish)                                   */
+  /* ------------------------------------------------------------------ */
+  'biome.ash': 'Aschfall',
+  'biome.jungle': 'Grüne Fäulnis',
+  'biome.ice': 'Gletscher',
+  'biome.desert': 'Die Salzöden',
+  'biome.blood': 'Nekroflut',
+  'biome.void': 'Der Schwarmschlund',
+  'skirmish.size.small': 'Klein',
+  'skirmish.size.medium': 'Mittel',
+  'skirmish.size.large': 'Groß',
+  'skirmish.size.huge': 'Riesig',
+  'skirmish.name': 'Freies Gefecht',
+  'skirmish.subtitle': '{size} · {biome}',
+  'skirmish.briefing': 'Ein individueller Einsatz — eure Größe, euer Biom, eure Schwierigkeit. Hier steht kein '
+    + 'Kampagnenfortschritt auf dem Spiel — nur der Kampf.',
+
+  /* ------------------------------------------------------------------ */
+  /* Ausrüstung: Waffen & Rüstung                                         */
+  /* ------------------------------------------------------------------ */
+  'weapon.rifle.name': 'Sturmgewehr',
+  'weapon.rifle.desc': 'Ausgewogene Standardwaffe. Gleichmäßiger Einzelzielschaden, keine echten Schwächen.',
+  'weapon.shotgun.name': 'Kampfschrotflinte',
+  'weapon.shotgun.desc': 'Kegel aus fünf Kugeln. Verheerend aus der Nähe, verliert auf Distanz stark an Wirkung.',
+  'weapon.dualmg.name': 'Zwillings-Autokanone',
+  'weapon.dualmg.desc': 'Zwei Feuerströme mit deutlich höherer Feuerrate. Weite Streuung, hohe Dauerleistung.',
+  'weapon.rocket.name': 'Raketenwerfer',
+  'weapon.rocket.desc': 'Langsam und schwer, aber explosiv — räumt Ansammlungen, die Türme allein nicht ausdünnen können.',
+  'armor.tier0.name': 'Ungepanzert',
+  'armor.tier1.name': 'Panzerweste',
+  'armor.tier2.name': 'Verbundpanzerung',
+  'armor.tier3.name': 'Exo-Panzerung',
+
+  /* ------------------------------------------------------------------ */
   /* relic upgrades                                                       */
   /* ------------------------------------------------------------------ */
   'relicUpgrade.category.core.label': 'Reaktorkern',
@@ -341,11 +385,13 @@ export const de: Record<string, string> = {
   'game.place.solidRock': 'Festgestein',
   'game.place.occupied': 'Belegt',
   'game.place.tooCloseCore': 'Zu nah am Kern',
+  'game.place.playerInWay': 'Der Charakter ist im Weg',
   'game.place.tooCloseGate': 'Zu nah an einem Schwarmtor',
   'game.place.needsOreSeam': 'Muss auf einer Erzader platziert werden',
   'game.place.seamExtractorOnly': 'Erzader — hier passt nur ein Extraktor',
   'game.banner.finalWave': 'FINALE WELLE — {desc}',
   'game.banner.wave': 'WELLE {n} / {total}',
+  'game.wave.composition': '{count}× {name}',
   'game.banner.remnantTurns': 'DER REST GREIFT AN',
   'game.banner.stragglersMany': '{n} Nachzügler stürmen den Kern',
   'game.banner.stragglersOne': '{n} Nachzügler stürmt den Kern',
@@ -389,10 +435,14 @@ export const de: Record<string, string> = {
   'touchHud.button.build': 'BAUEN',
   'touchHud.button.start': 'START',
   'touchHud.drawer.construct': 'KONSTRUKTION',
+  'touchHud.drawer.resources': '◆ {ore}   ✦ {essence}',
+  'touchHud.drawer.costOreEssence': '{ore}+{essence}',
+  'touchHud.drawer.costOre': '{ore}',
   'touchHud.placement.tapToPlace': 'TIPPEN ZUM PLATZIEREN',
   'touchHud.placement.cannotBuildHere': 'HIER NICHT BAUBAR',
   'touchHud.mine.holdToMine': 'AUF DER ADER HALTEN ZUM ABBAUEN',
   'touchHud.menu.repair': 'REPARIEREN',
+  'touchHud.menu.repairPercent': '{pct}%',
   'touchHud.menu.sell': 'VERKAUFEN',
   'touchHud.menu.close': 'SCHLIESSEN',
   'touchHud.menu.targeting.first': 'ERSTES',
@@ -418,6 +468,10 @@ export const de: Record<string, string> = {
   'hud.buildBar.legendBuild': 'LINKS platzieren   ·   RECHTS abbrechen   ·   E reparieren   ·   T Zielmodus',
   'hud.buildBar.legendNormal': 'WASD Bewegung   ·   LINKS Feuer   ·   RECHTS Abbau   ·   SHIFT Sprint   ·   '
     + 'Q Verkauf   ·   E Reparatur   ·   TAB Statistik',
+  'build.category.resources': 'Ressourcen',
+  'build.category.towers': 'Türme',
+  'build.category.defence': 'Verteidigung',
+  'hud.buildBar.legendSections': 'Z/X/C Bereich   ·   1-8 Struktur   ·   WASD Bewegung   ·   LINKS Feuer   ·   RECHTS Abbau   ·   Q Verkauf   ·   TAB Statistik',
   'hud.rail.coreIntegrity': 'KERNINTEGRITÄT',
   'hud.rail.chassis': 'CHASSIS',
   'hud.rail.overheated': 'WAFFE ÜBERHITZT',
@@ -480,14 +534,18 @@ export const de: Record<string, string> = {
   'hud.telemetry.elapsed': 'Verstrichene Zeit',
   'hud.telemetry.entities': 'Objekte',
   'hud.telemetry.entitiesValue': '{e}G {b}B {p}P',
+  'hud.telemetry.fps': 'FPS',
+  'hud.telemetry.waveComposition': '{count}× {name}',
   'hud.telemetry.nextWave': 'NÄCHSTE WELLE',
 
   /* ------------------------------------------------------------------ */
   /* screens.ts                                                           */
   /* ------------------------------------------------------------------ */
+  'screens.boot.title': 'SWARM',
   'screens.boot.subtitle': 'haltet die Linie',
   'screens.boot.compiling': 'prozedurale Systeme werden kompiliert',
 
+  'screens.title.title': 'SWARM',
   'screens.title.subtitle': 'haltet die Linie',
   'screens.title.pitch': 'Ein einzelner Reaktorkern gegen einen endlosen Schwarm. Baut die Adern ab, verriegelt die Zugänge '
     + 'mit Mauern und verarbeitet den Schwarm zu etwas, das ihr ausgeben könnt. Jede Welle ist ein Countdown bis zu der, die den Sektor beendet.',
@@ -498,11 +556,13 @@ export const de: Record<string, string> = {
   'screens.title.replay': 'Wiederholen · {index}. {name}',
   'screens.title.continue': 'Fortsetzen · {index}. {name}',
   'screens.title.sectorSelect': 'Sektorauswahl',
+  'screens.title.sectorPip': '{index}. {name}',
   'screens.title.newCampaign': 'Neue Kampagne',
   'screens.title.endlessBest': 'Endlos · beste Welle {best}',
   'screens.title.endlessMode': 'Endlosmodus',
   'screens.title.armoury': 'Arsenal · {relics} ⬢',
   'screens.title.achievements': 'Errungenschaften · {unlocked}/{total}',
+  'screens.title.customBattle': 'Freies Gefecht',
   'screens.title.settings': 'Einstellungen',
   'screens.title.stats.runs': 'Durchläufe',
   'screens.title.stats.sectorsCleared': 'Geräumte Sektoren',
@@ -511,9 +571,10 @@ export const de: Record<string, string> = {
   'screens.title.stats.oreMined': 'Abgebautes Erz',
   'screens.title.stats.bestWave': 'Beste Welle',
   'screens.title.hintBar': 'WASD Bewegung · LINKS Feuer · RECHTS Abbau · Zifferntasten Bau · SHIFT Sprint · '
-    + 'TAB Statistik · ESC Pause',
+    + 'G Ausrüstung · TAB Statistik · ESC Pause',
 
   'screens.levelSelect.heading': 'Sektorauswahl',
+  'screens.levelSelect.cardTitle': '{index}. {name}',
   'screens.levelSelect.intro': '{cleared} Sektor(en) geräumt. Das Räumen eines Sektors schaltet den nächsten dauerhaft frei, so '
     + 'dass ihr jederzeit dort weitermachen könnt. Die Karte wird bei jedem Einsatz neu ausgewürfelt — '
     + 'einen Sektor erneut zu spielen ist nie derselbe Kampf.',
@@ -523,21 +584,26 @@ export const de: Record<string, string> = {
   'screens.levelSelect.startHere': 'HIER STARTEN',
   'screens.levelSelect.unlockedContinue': '▶ FREIGESCHALTET — HIER FORTSETZEN',
   'screens.levelSelect.lockedBadge': '🔒 GESPERRT',
+  'screens.levelSelect.ngTier': 'New-Game+-Stufe — Gegner x{mult}',
   'screens.levelSelect.back': 'Zurück',
 
   'screens.armoury.heading': 'Arsenal',
   'screens.armoury.intro': 'Relikte erhaltet ihr durchs Räumen von Sektoren, das Besiegen von Bossen und das Freischalten von '
     + 'Errungenschaften. Alles, was ihr hier kauft, ist dauerhaft und gilt ab sofort für jeden Durchlauf.',
+  'screens.armoury.relicAmount': '{relics} ⬢',
   'screens.armoury.walletSub': 'VERFÜGBARE RELIKTE<br>{spent} investiert · {earned} insgesamt verdient',
   'screens.armoury.effectMaxed': 'MAXIMIERT — {owned}',
+  'screens.armoury.effectUpgrade': '{owned}   →   {next}',
   'screens.armoury.effectPerRank': 'Pro Rang: {perk}',
   'screens.armoury.maxButton': '✔ MAX',
+  'screens.armoury.costButton': '{cost} ⬢',
   'screens.armoury.back': 'Zurück',
   'screens.armoury.refundAll': 'Alles zurückerstatten',
   'screens.armoury.refundConfirm': 'Alle Upgrades zurückerstatten und {relics} Relikte zurückerhalten?',
 
   'screens.endlessSelect.subtitle': 'keine letzte Welle',
   'screens.endlessSelect.heading': 'Endlos',
+  'screens.endlessSelect.cardTitle': '{index}. {name}',
   'screens.endlessSelect.intro': 'Der Schwarm hört nie auf. Die Wellen eskalieren endlos, und jede zehnte bringt einen Boss. '
     + 'Hier gibt es keinen Sieg — nur, wie weit ihr kommt, und die Relikte, die ihr mitbringt.',
   'screens.endlessSelect.meta': '{gates} Schwarmtore · {types} Feindtypen<br><br>Schwierigkeitsmultiplikator '
@@ -546,11 +612,25 @@ export const de: Record<string, string> = {
   'screens.endlessSelect.noRecord': 'NOCH KEIN REKORD',
   'screens.endlessSelect.back': 'Zurück',
 
+  'screens.customBattle.subtitle': 'eure Regeln',
+  'screens.customBattle.heading': 'Freies Gefecht',
+  'screens.customBattle.intro': 'Konfiguriert eine einmalige Karte — Größe, Biom, Schwierigkeit, Schwarmtore — und '
+    + 'tretet an mit bereits allem freigeschaltet. Nichts hier berührt den Kampagnenfortschritt; es ist ein Kampf '
+    + 'um seiner selbst willen.',
+  'screens.customBattle.size': 'Kartengröße',
+  'screens.customBattle.biome': 'Biom',
+  'screens.customBattle.difficulty': 'Schwierigkeitsstufe — Gegner x{mult}',
+  'screens.customBattle.gates': 'Schwarmtore',
+  'screens.customBattle.deploy': 'Einsetzen',
+  'screens.customBattle.back': 'Zurück',
+
   'screens.achievements.heading': 'Errungenschaften',
   'screens.achievements.intro': '{unlocked} von {total} freigeschaltet. Jede Freischaltung gewährt einen dauerhaften Bonus, '
     + 'der zu Beginn jedes Durchlaufs gilt — sie stapeln sich.',
   'screens.achievements.hiddenName': 'Verborgene Errungenschaft',
   'screens.achievements.hiddenDesc': 'Entdeckt sie im Feld.',
+  'screens.achievements.perkPrefix': '⬆ {perk}',
+  'screens.achievements.progress': '{prog} / {goal}',
   'screens.achievements.back': 'Zurück',
 
   'screens.settings.heading': 'Einstellungen',
@@ -598,6 +678,7 @@ export const de: Record<string, string> = {
 
   'screens.pause.heading': 'Pausiert',
   'screens.pause.resume': 'Fortsetzen',
+  'screens.pause.loadout': 'Ausrüstung',
   'screens.pause.achievements': 'Errungenschaften',
   'screens.pause.settings': 'Einstellungen',
   'screens.pause.restartSector': 'Sektor neu starten',
@@ -607,6 +688,21 @@ export const de: Record<string, string> = {
   'screens.pause.abandonConfirm': 'Durchlauf abbrechen? Jeglicher gespeicherter Fortschritt dieses Durchlaufs geht verloren.',
   'screens.pause.hintCanSave': 'ESC zum Fortsetzen · der Durchlauf speichert automatisch zu Beginn jeder Bauphase',
   'screens.pause.hintCannotSave': 'ESC zum Fortsetzen · Speichern ist während Bauphasen möglich',
+
+  'screens.loadout.heading': 'Ausrüstung',
+  'screens.loadout.intro': 'Hier ausgegebene Essenz kauft Waffen und Rüstung für euer Chassis — das bleibt zwischen '
+    + 'den Sektoren dieses Kampagnenversuchs erhalten, genau wie Technologien, ist aber keine dauerhafte '
+    + 'Freischaltung wie im Arsenal.',
+  'screens.loadout.essence': '{essence} ✦',
+  'screens.loadout.weapons': 'Waffen',
+  'screens.loadout.equipped': 'AUSGERÜSTET',
+  'screens.loadout.equip': 'AUSRÜSTEN',
+  'screens.loadout.costButton': '{cost} ✦',
+  'screens.loadout.armor': 'Rüstung',
+  'screens.loadout.armorHp': '+{hp} max. LP',
+  'screens.loadout.worn': 'GETRAGEN',
+  'screens.loadout.locked': 'GESPERRT',
+  'screens.loadout.close': 'Schließen',
 
   'screens.tutorial.heading': 'So wird gespielt',
   'screens.tutorial.moveTitle': 'Bewegen',
@@ -630,11 +726,15 @@ export const de: Record<string, string> = {
 
   'screens.victory.subtitleCampaign': 'Kampagne abgeschlossen',
   'screens.victory.subtitleSector': 'Sektor gesichert',
+  'screens.victory.subtitleSkirmish': 'freies Gefecht abgeschlossen',
   'screens.victory.titleCampaign': 'Der Schwarm schweigt',
   'screens.victory.titleSector': 'Sektor gesichert',
+  'screens.victory.titleSkirmish': 'Gefecht gewonnen',
   'screens.victory.flavorCampaign': 'Der Weltenfresser ist Schrott, und der Schlund stürzt hinter euch ein. Jede '
     + 'Errungenschaft, die ihr freigeschaltet habt, bleibt dauerhaft — beginnt erneut, und ihr startet stärker.',
   'screens.victory.flavorSector': '{level} ist geräumt. Eure Technologien und Freischaltungen werden übernommen.',
+  'screens.victory.flavorSkirmish': 'Eure Konfiguration hat gehalten. Hier stand kein Kampagnenfortschritt auf dem '
+    + 'Spiel — nur die verdienten Relikte.',
   'screens.victory.progressSaved': '✔ <strong>Fortschritt gespeichert.</strong> Sektor {index} — {name} — ist freigeschaltet. '
     + 'Ihr könnt jetzt beenden und beim nächsten Mal direkt dort weitermachen.',
   'screens.victory.relicAward': '⬢ <strong>+{award} Relikte</strong> — {total} angesammelt. Gebt sie im '
@@ -650,6 +750,7 @@ export const de: Record<string, string> = {
   'screens.victory.stats.time': 'Zeit',
   'screens.victory.runTech': '<strong>Technologien des Durchlaufs:</strong> {list}',
   'screens.victory.advance': 'Weiter zum nächsten Sektor',
+  'screens.victory.battleAgain': 'Erneut kämpfen',
   'screens.victory.returnToTitle': 'Zurück zum Titelbildschirm',
 
   'screens.defeat.subtitleEndless': 'Durchlauf beendet',
@@ -670,5 +771,6 @@ export const de: Record<string, string> = {
   'screens.defeat.stats.time': 'Zeit',
   'screens.defeat.runAgain': 'Nochmal versuchen',
   'screens.defeat.retrySector': 'Sektor wiederholen',
+  'screens.defeat.retryBattle': 'Gefecht wiederholen',
   'screens.defeat.returnToTitle': 'Zurück zum Titelbildschirm',
 };

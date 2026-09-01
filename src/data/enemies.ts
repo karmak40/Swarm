@@ -21,7 +21,7 @@ export type EnemyBehavior =
 
 export type EnemyShape =
   | 'crawler' | 'mite' | 'brute' | 'spitter' | 'moth'
-  | 'bomber' | 'burrower' | 'shaman' | 'blob' | 'boss';
+  | 'bomber' | 'burrower' | 'shaman' | 'blob' | 'queen' | 'scorpion' | 'wasp' | 'boss';
 
 export interface EnemyDef {
   id: string;
@@ -51,8 +51,14 @@ export interface EnemyDef {
   splitCount?: number;
   auraRadius?: number;
   phaseInterval?: number;
+  /**
+   * Ignores terrain/walls like `behavior: 'flyer'` does, but independent of
+   * behavior — lets a non-'flyer' behavior (e.g. 'ranged') keep its own
+   * targeting/movement while still flying. See Enemy.flying.
+   */
+  flies?: boolean;
   boss?: boolean;
-  /** Boss-only: telegraphed special abilities. */
+  /** Telegraphed special abilities — not boss-exclusive, see Game.updateBossAbilities. */
   abilities?: BossAbility[];
   description?: string;
 }
@@ -83,6 +89,15 @@ export const ENEMIES: Record<string, EnemyDef> = {
     ore: 2, essence: 4, xp: 5, color: 0x6b3f6e, accent: 0xd07dff, cost: 5,
     description: 'Armoured battering ram. Targets your walls first.',
   },
+  scorpion: {
+    id: 'scorpion', name: 'Sand Scorpion', shape: 'scorpion', behavior: 'charger',
+    hp: 130, speed: 58, radius: 14, armor: 3, damage: 16, attackRate: 1.4, attackRange: 6,
+    ore: 2, essence: 5, xp: 5, color: 0x7a5a2e, accent: 0xffb347, cost: 5.2,
+    abilities: [
+      { id: 'charge', cooldown: 7, telegraph: 0.7, value: 380 },
+    ],
+    description: 'Skitters in at a steady clip, then rears back and stinger-charges the core. The wind-up is your only warning.',
+  },
   spitter: {
     id: 'spitter', name: 'Spitter', shape: 'spitter', behavior: 'ranged',
     hp: 58, speed: 48, radius: 11, armor: 1, damage: 11, attackRate: 0.72, attackRange: 190,
@@ -95,6 +110,13 @@ export const ENEMIES: Record<string, EnemyDef> = {
     hp: 46, speed: 88, radius: 10, armor: 0, damage: 9, attackRate: 1.3, attackRange: 5,
     ore: 0, essence: 2, xp: 2, color: 0x3d5c8c, accent: 0x8fd0ff, cost: 2.4,
     description: 'Flies over walls and terrain. Only anti-air reaches it.',
+  },
+  wasp: {
+    id: 'wasp', name: 'Void Wasp', shape: 'wasp', behavior: 'ranged', flies: true,
+    hp: 34, speed: 102, radius: 8, armor: 0, damage: 10, attackRate: 1.0, attackRange: 170,
+    ore: 0, essence: 2, xp: 2, color: 0x2a2410, accent: 0xffe066, cost: 2.6,
+    projectileSpeed: 260,
+    description: 'Flies, and keeps its distance while it stings — the first flier that will not just close and melee you.',
   },
   bomber: {
     id: 'bomber', name: 'Bloater', shape: 'bomber', behavior: 'bomber',
@@ -116,6 +138,15 @@ export const ENEMIES: Record<string, EnemyDef> = {
     ore: 0, essence: 6, xp: 5, color: 0x5d3f8a, accent: 0xc79bff, cost: 4.5,
     auraRadius: 150,
     description: 'Regenerates and hardens everything around it. Priority target.',
+  },
+  queen: {
+    id: 'queen', name: 'Broodmother', shape: 'queen', behavior: 'support',
+    hp: 480, speed: 22, radius: 22, armor: 4, damage: 0, attackRate: 0, attackRange: 0,
+    ore: 3, essence: 10, xp: 8, color: 0x4a2f5a, accent: 0xd88fff, cost: 7,
+    abilities: [
+      { id: 'spawn', cooldown: 10, telegraph: 1.1, value: 3 },
+    ],
+    description: 'Never fights you directly. Every few seconds she vomits fresh broodlings instead — kill her fast or the wave never thins out.',
   },
   blob: {
     id: 'blob', name: 'Splitter', shape: 'blob', behavior: 'splitter',

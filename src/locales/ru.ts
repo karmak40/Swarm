@@ -41,6 +41,10 @@ export const ru: Record<string, string> = {
   'building.repairbay.desc': 'Непрерывно чинит все сооружения в радиусе действия, включая себя.',
   'building.shield.name': 'Пилон Эгиды',
   'building.shield.desc': 'Окутывает ближайшие сооружения регенерирующим барьером, принимающим удар первым.',
+  'building.forcefield.name': 'Излучатель поля',
+  'building.forcefield.desc': 'Поднимает купол, перехватывающий дальний огонь — ближний бой всё равно проходит. '
+    + 'Требует энергию на зарядку и ещё больше на поддержание; при достаточном уроне купол рушится, и каждая '
+    + 'следующая перезарядка длится дольше первой.',
 
   /* ------------------------------------------------------------------ */
   /* enemies                                                              */
@@ -64,6 +68,12 @@ export const ru: Record<string, string> = {
   'enemy.blob.name': 'Дробитель',
   'enemy.blob.desc': 'При смерти разрывается на три более мелких капли.',
   'enemy.blobling.name': 'Каплёныш',
+  'enemy.queen.name': 'Матка',
+  'enemy.queen.desc': 'Никогда не дерётся сама. Каждые несколько секунд изрыгает свежих детёнышей — убейте её быстро, или волна никогда не поредеет.',
+  'enemy.scorpion.name': 'Песчаный скорпион',
+  'enemy.scorpion.desc': 'Приближается ровным шагом, затем встаёт на дыбы и жалом бросается к ядру. Замах — единственное предупреждение.',
+  'enemy.wasp.name': 'Пустотная оса',
+  'enemy.wasp.desc': 'Летает и держит дистанцию, жаля издали — первый летун, который не просто идёт на сближение для ближнего боя.',
   'enemy.tyrant.name': 'ТИРАН УЛЬЯ',
   'enemy.tyrant.desc': 'Праматерь роя. Бьёт оземь и изрыгает свежих дронов.',
   'enemy.devourer.name': 'ПОЖИРАТЕЛЬ',
@@ -236,6 +246,40 @@ export const ru: Record<string, string> = {
     + 'Пригодится всё, что вы успели открыть.',
 
   /* ------------------------------------------------------------------ */
+  /* biomes & custom battle (skirmish)                                    */
+  /* ------------------------------------------------------------------ */
+  'biome.ash': 'Пепелище',
+  'biome.jungle': 'Гниющая зелень',
+  'biome.ice': 'Ледник',
+  'biome.desert': 'Соляные пустоши',
+  'biome.blood': 'Некроприлив',
+  'biome.void': 'Глотка улья',
+  'skirmish.size.small': 'Малая',
+  'skirmish.size.medium': 'Средняя',
+  'skirmish.size.large': 'Большая',
+  'skirmish.size.huge': 'Огромная',
+  'skirmish.name': 'Особая битва',
+  'skirmish.subtitle': '{size} · {biome}',
+  'skirmish.briefing': 'Особое развёртывание — ваш размер, ваш биом, ваша сложность. Здесь не идёт речь о '
+    + 'прогрессе кампании — только бой.',
+
+  /* ------------------------------------------------------------------ */
+  /* loadout: weapons & armor                                             */
+  /* ------------------------------------------------------------------ */
+  'weapon.rifle.name': 'Автовинтовка',
+  'weapon.rifle.desc': 'Сбалансированное оружие. Стабильный урон по одной цели, без явных слабостей.',
+  'weapon.shotgun.name': 'Штурмовой дробовик',
+  'weapon.shotgun.desc': 'Конус из пяти дробин. Разрушителен вблизи, резко теряет силу на дистанции.',
+  'weapon.dualmg.name': 'Спаренная автопушка',
+  'weapon.dualmg.desc': 'Два потока пуль с гораздо более высокой скорострельностью. Широкий разброс, высокий устойчивый урон.',
+  'weapon.rocket.name': 'Ракетница',
+  'weapon.rocket.desc': 'Медленная и тяжёлая, зато взрывная — расчищает скопления, с которыми одни турели не справляются.',
+  'armor.tier0.name': 'Без брони',
+  'armor.tier1.name': 'Бронежилет',
+  'armor.tier2.name': 'Композитная броня',
+  'armor.tier3.name': 'Экзоброня',
+
+  /* ------------------------------------------------------------------ */
   /* relic upgrades                                                       */
   /* ------------------------------------------------------------------ */
   'relicUpgrade.category.core.label': 'Ядро реактора',
@@ -341,11 +385,13 @@ export const ru: Record<string, string> = {
   'game.place.solidRock': 'Сплошная порода',
   'game.place.occupied': 'Занято',
   'game.place.tooCloseCore': 'Слишком близко к ядру',
+  'game.place.playerInWay': 'На пути персонажа',
   'game.place.tooCloseGate': 'Слишком близко к воротам роя',
   'game.place.needsOreSeam': 'Нужно разместить на рудной жиле',
   'game.place.seamExtractorOnly': 'Рудная жила — здесь годится только экстрактор',
   'game.banner.finalWave': 'ФИНАЛЬНАЯ ВОЛНА — {desc}',
   'game.banner.wave': 'ВОЛНА {n} / {total}',
+  'game.wave.composition': '{count}× {name}',
   'game.banner.remnantTurns': 'ОСТАТКИ РОЯ ИДУТ В АТАКУ',
   'game.banner.stragglersMany': '{n} отставших бегут к ядру',
   'game.banner.stragglersOne': '{n} отставший бежит к ядру',
@@ -389,10 +435,14 @@ export const ru: Record<string, string> = {
   'touchHud.button.build': 'СТРОИТЬ',
   'touchHud.button.start': 'СТАРТ',
   'touchHud.drawer.construct': 'ПОСТРОЙКА',
+  'touchHud.drawer.resources': '◆ {ore}   ✦ {essence}',
+  'touchHud.drawer.costOreEssence': '{ore}+{essence}',
+  'touchHud.drawer.costOre': '{ore}',
   'touchHud.placement.tapToPlace': 'КОСНИТЕСЬ, ЧТОБЫ ПОСТРОИТЬ',
   'touchHud.placement.cannotBuildHere': 'ЗДЕСЬ НЕЛЬЗЯ СТРОИТЬ',
   'touchHud.mine.holdToMine': 'УДЕРЖИВАЙТЕ НА ЖИЛЕ, ЧТОБЫ ДОБЫВАТЬ',
   'touchHud.menu.repair': 'РЕМОНТ',
+  'touchHud.menu.repairPercent': '{pct}%',
   'touchHud.menu.sell': 'ПРОДАТЬ',
   'touchHud.menu.close': 'ЗАКРЫТЬ',
   'touchHud.menu.targeting.first': 'ПЕРВАЯ',
@@ -418,6 +468,10 @@ export const ru: Record<string, string> = {
   'hud.buildBar.legendBuild': 'ЛКМ — построить   ·   ПКМ — отмена   ·   E — ремонт   ·   T — цель',
   'hud.buildBar.legendNormal': 'WASD — движение   ·   ЛКМ — огонь   ·   ПКМ — добыча   ·   SHIFT — рывок   ·   '
     + 'Q — продажа   ·   E — ремонт   ·   TAB — статистика',
+  'build.category.resources': 'Ресурсы',
+  'build.category.towers': 'Башни',
+  'build.category.defence': 'Оборона',
+  'hud.buildBar.legendSections': 'Z/X/C — раздел   ·   1-8 — постройка   ·   WASD — движение   ·   ЛКМ — огонь   ·   ПКМ — добыча   ·   Q — продажа   ·   TAB — статистика',
   'hud.rail.coreIntegrity': 'ПРОЧНОСТЬ ЯДРА',
   'hud.rail.chassis': 'КОРПУС',
   'hud.rail.overheated': 'ОРУЖИЕ ПЕРЕГРЕТО',
@@ -480,14 +534,18 @@ export const ru: Record<string, string> = {
   'hud.telemetry.elapsed': 'Время',
   'hud.telemetry.entities': 'Объекты',
   'hud.telemetry.entitiesValue': '{e}в {b}с {p}ч',
+  'hud.telemetry.fps': 'FPS',
+  'hud.telemetry.waveComposition': '{count}× {name}',
   'hud.telemetry.nextWave': 'СЛЕДУЮЩАЯ ВОЛНА',
 
   /* ------------------------------------------------------------------ */
   /* screens.ts                                                           */
   /* ------------------------------------------------------------------ */
+  'screens.boot.title': 'SWARM',
   'screens.boot.subtitle': 'держите линию',
   'screens.boot.compiling': 'компиляция процедурных систем',
 
+  'screens.title.title': 'SWARM',
   'screens.title.subtitle': 'держите линию',
   'screens.title.pitch': 'Одно реакторное ядро против бесконечного улья. Добывайте жилы, отгораживайте подступы '
     + 'стенами и перемалывайте рой в то, что можно потратить. Каждая волна — это отсчёт до той, что завершает сектор.',
@@ -498,11 +556,13 @@ export const ru: Record<string, string> = {
   'screens.title.replay': 'Переиграть · {index}. {name}',
   'screens.title.continue': 'Продолжить · {index}. {name}',
   'screens.title.sectorSelect': 'Выбор сектора',
+  'screens.title.sectorPip': '{index}. {name}',
   'screens.title.newCampaign': 'Новая кампания',
   'screens.title.endlessBest': 'Бесконечный режим · лучшая волна {best}',
   'screens.title.endlessMode': 'Бесконечный режим',
   'screens.title.armoury': 'Арсенал · {relics} ⬢',
   'screens.title.achievements': 'Достижения · {unlocked}/{total}',
+  'screens.title.customBattle': 'Особая битва',
   'screens.title.settings': 'Настройки',
   'screens.title.stats.runs': 'Забегов',
   'screens.title.stats.sectorsCleared': 'Секторов зачищено',
@@ -511,9 +571,10 @@ export const ru: Record<string, string> = {
   'screens.title.stats.oreMined': 'Добыто руды',
   'screens.title.stats.bestWave': 'Лучшая волна',
   'screens.title.hintBar': 'WASD — движение · ЛКМ — огонь · ПКМ — добыча · цифры — постройка · SHIFT — рывок · '
-    + 'TAB — статистика · ESC — пауза',
+    + 'G — снаряжение · TAB — статистика · ESC — пауза',
 
   'screens.levelSelect.heading': 'Выбор сектора',
+  'screens.levelSelect.cardTitle': '{index}. {name}',
   'screens.levelSelect.intro': 'Зачищено секторов: {cleared}. Зачистка сектора навсегда открывает следующий, так '
     + 'что вы всегда можете продолжить оттуда. Карта каждый раз генерируется заново — повторное прохождение сектора '
     + 'никогда не будет тем же самым боем.',
@@ -523,21 +584,26 @@ export const ru: Record<string, string> = {
   'screens.levelSelect.startHere': 'НАЧАТЬ ЗДЕСЬ',
   'screens.levelSelect.unlockedContinue': '▶ ОТКРЫТО — ПРОДОЛЖИТЬ ЗДЕСЬ',
   'screens.levelSelect.lockedBadge': '🔒 ЗАБЛОКИРОВАНО',
+  'screens.levelSelect.ngTier': 'Уровень New Game+ — враги x{mult}',
   'screens.levelSelect.back': 'Назад',
 
   'screens.armoury.heading': 'Арсенал',
   'screens.armoury.intro': 'Реликвии достаются за зачистку секторов, повержение боссов и получение достижений. '
     + 'Всё купленное здесь остаётся навсегда и действует в каждом следующем забеге.',
+  'screens.armoury.relicAmount': '{relics} ⬢',
   'screens.armoury.walletSub': 'ДОСТУПНО РЕЛИКВИЙ<br>вложено: {spent} · получено за всё время: {earned}',
   'screens.armoury.effectMaxed': 'МАКСИМУМ — {owned}',
+  'screens.armoury.effectUpgrade': '{owned}   →   {next}',
   'screens.armoury.effectPerRank': 'За ранг: {perk}',
   'screens.armoury.maxButton': '✔ МАКС',
+  'screens.armoury.costButton': '{cost} ⬢',
   'screens.armoury.back': 'Назад',
   'screens.armoury.refundAll': 'Вернуть всё',
   'screens.armoury.refundConfirm': 'Вернуть все улучшения и получить обратно {relics} реликвий?',
 
   'screens.endlessSelect.subtitle': 'без финальной волны',
   'screens.endlessSelect.heading': 'Бесконечный режим',
+  'screens.endlessSelect.cardTitle': '{index}. {name}',
   'screens.endlessSelect.intro': 'Улей никогда не останавливается. Волны нарастают бесконечно, и каждая десятая '
     + 'приводит босса. Здесь нет победы — только то, как далеко вы зайдёте, и реликвии, которые принесёте с собой.',
   'screens.endlessSelect.meta': '{gates} ворот роя · {types} типов врагов<br><br>Множитель сложности '
@@ -546,11 +612,24 @@ export const ru: Record<string, string> = {
   'screens.endlessSelect.noRecord': 'ПОКА НЕТ РЕКОРДА',
   'screens.endlessSelect.back': 'Назад',
 
+  'screens.customBattle.subtitle': 'ваши правила',
+  'screens.customBattle.heading': 'Особая битва',
+  'screens.customBattle.intro': 'Настройте одноразовую карту — размер, биом, сложность, ворота роя — и высадитесь '
+    + 'со всем уже разблокированным. Здесь ничто не влияет на прогресс кампании — это бой ради самого боя.',
+  'screens.customBattle.size': 'Размер карты',
+  'screens.customBattle.biome': 'Биом',
+  'screens.customBattle.difficulty': 'Уровень сложности — враги x{mult}',
+  'screens.customBattle.gates': 'Ворота роя',
+  'screens.customBattle.deploy': 'Развернуться',
+  'screens.customBattle.back': 'Назад',
+
   'screens.achievements.heading': 'Достижения',
   'screens.achievements.intro': 'Открыто {unlocked} из {total}. Каждое открытое достижение даёт постоянный бонус, '
     + 'действующий с начала каждого забега, — бонусы суммируются.',
   'screens.achievements.hiddenName': 'Скрытое достижение',
   'screens.achievements.hiddenDesc': 'Откройте его в бою.',
+  'screens.achievements.perkPrefix': '⬆ {perk}',
+  'screens.achievements.progress': '{prog} / {goal}',
   'screens.achievements.back': 'Назад',
 
   'screens.settings.heading': 'Настройки',
@@ -598,6 +677,7 @@ export const ru: Record<string, string> = {
 
   'screens.pause.heading': 'Пауза',
   'screens.pause.resume': 'Продолжить',
+  'screens.pause.loadout': 'Снаряжение',
   'screens.pause.achievements': 'Достижения',
   'screens.pause.settings': 'Настройки',
   'screens.pause.restartSector': 'Перезапустить сектор',
@@ -607,6 +687,21 @@ export const ru: Record<string, string> = {
   'screens.pause.abandonConfirm': 'Бросить забег? Весь сохранённый прогресс этого забега будет потерян.',
   'screens.pause.hintCanSave': 'ESC — продолжить · забег автосохраняется в начале каждой фазы строительства',
   'screens.pause.hintCannotSave': 'ESC — продолжить · сохранение доступно во время фаз строительства',
+
+  'screens.loadout.heading': 'Снаряжение',
+  'screens.loadout.intro': 'Потраченная здесь эссенция покупает оружие и броню для вашего корпуса — это переносится '
+    + 'между секторами в рамках текущей попытки прохождения кампании, как и технологии, но не является постоянной '
+    + 'разблокировкой, как в Арсенале.',
+  'screens.loadout.essence': '{essence} ✦',
+  'screens.loadout.weapons': 'Оружие',
+  'screens.loadout.equipped': 'ЭКИПИРОВАНО',
+  'screens.loadout.equip': 'ЭКИПИРОВАТЬ',
+  'screens.loadout.costButton': '{cost} ✦',
+  'screens.loadout.armor': 'Броня',
+  'screens.loadout.armorHp': '+{hp} к макс. ХП',
+  'screens.loadout.worn': 'НАДЕТО',
+  'screens.loadout.locked': 'ЗАБЛОКИРОВАНО',
+  'screens.loadout.close': 'Закрыть',
 
   'screens.tutorial.heading': 'Как играть',
   'screens.tutorial.moveTitle': 'Движение',
@@ -630,11 +725,15 @@ export const ru: Record<string, string> = {
 
   'screens.victory.subtitleCampaign': 'кампания завершена',
   'screens.victory.subtitleSector': 'сектор удержан',
+  'screens.victory.subtitleSkirmish': 'особая битва завершена',
   'screens.victory.titleCampaign': 'Улей молчит',
   'screens.victory.titleSector': 'Сектор удержан',
+  'screens.victory.titleSkirmish': 'Битва выиграна',
   'screens.victory.flavorCampaign': 'Пожиратель Миров превращён в металлолом, а глотка обрушивается за вашей '
     + 'спиной. Каждое полученное достижение остаётся навсегда — начните заново, и вы начнёте сильнее.',
   'screens.victory.flavorSector': '{level} зачищен. Ваши технологии и разблокировки переносятся дальше.',
+  'screens.victory.flavorSkirmish': 'Ваша конфигурация выстояла. Здесь не было прогресса кампании на кону — только '
+    + 'заработанные реликвии.',
   'screens.victory.progressSaved': '✔ <strong>Прогресс сохранён.</strong> Сектор {index} — {name} — открыт. '
     + 'Можете выйти сейчас и в следующий раз начать прямо оттуда.',
   'screens.victory.relicAward': '⬢ <strong>+{award} реликвий</strong> — накоплено {total}. Потратьте их в '
@@ -650,6 +749,7 @@ export const ru: Record<string, string> = {
   'screens.victory.stats.time': 'Время',
   'screens.victory.runTech': '<strong>Технологии забега:</strong> {list}',
   'screens.victory.advance': 'Перейти к следующему сектору',
+  'screens.victory.battleAgain': 'Сразиться снова',
   'screens.victory.returnToTitle': 'Вернуться в меню',
 
   'screens.defeat.subtitleEndless': 'забег окончен',
@@ -670,5 +770,6 @@ export const ru: Record<string, string> = {
   'screens.defeat.stats.time': 'Время',
   'screens.defeat.runAgain': 'Попробовать снова',
   'screens.defeat.retrySector': 'Повторить сектор',
+  'screens.defeat.retryBattle': 'Повторить битву',
   'screens.defeat.returnToTitle': 'Вернуться в меню',
 };

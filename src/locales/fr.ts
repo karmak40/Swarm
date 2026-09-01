@@ -41,6 +41,10 @@ export const fr: Record<string, string> = {
   'building.repairbay.desc': 'Répare en continu toutes les structures à portée, y compris elle-même.',
   'building.shield.name': 'Pylône Égide',
   'building.shield.desc': "Enveloppe les structures proches d'une barrière régénérante qui absorbe les coups en priorité.",
+  'building.forcefield.name': 'Émetteur de Champ',
+  'building.forcefield.desc': "Érige un dôme qui intercepte les tirs à distance — le corps à corps passe toujours. "
+    + "Nécessite de l'énergie pour se charger, puis plus pour se maintenir ; assez de dégâts le fait s'effondrer, "
+    + 'et chaque recharge après la première prend plus de temps que la première.',
 
   /* ------------------------------------------------------------------ */
   /* enemies                                                              */
@@ -64,6 +68,12 @@ export const fr: Record<string, string> = {
   'enemy.blob.name': 'Diviseur',
   'enemy.blob.desc': 'Éclate en trois blobs plus petits à sa mort.',
   'enemy.blobling.name': 'Blobelet',
+  'enemy.queen.name': 'Mère Pondeuse',
+  'enemy.queen.desc': "Ne se bat jamais elle-même. Toutes les quelques secondes, elle vomit de nouvelles larves — abattez-la vite ou la vague ne faiblira jamais.",
+  'enemy.scorpion.name': 'Scorpion des Sables',
+  'enemy.scorpion.desc': "Approche d'un pas régulier, puis se cabre et charge le noyau en pointant son dard. La préparation est votre seul avertissement.",
+  'enemy.wasp.name': 'Guêpe du Vide',
+  'enemy.wasp.desc': 'Vole et garde ses distances tout en piquant — la première volante qui ne se contente pas de foncer au corps à corps.',
   'enemy.tyrant.name': 'TYRAN DE LA RUCHE',
   'enemy.tyrant.desc': 'La mère couveuse. Frappe le sol et vomit des drones frais.',
   'enemy.devourer.name': 'LE DÉVOREUR',
@@ -236,6 +246,40 @@ export const fr: Record<string, string> = {
     + 'Vous aurez besoin de tout ce que vous avez débloqué.',
 
   /* ------------------------------------------------------------------ */
+  /* biomes & bataille personnalisée (skirmish)                          */
+  /* ------------------------------------------------------------------ */
+  'biome.ash': 'Cendres',
+  'biome.jungle': 'Pourriture verdoyante',
+  'biome.ice': 'Glacier',
+  'biome.desert': 'Les Terres salées',
+  'biome.blood': 'Nécromarée',
+  'biome.void': 'La Gorge de la ruche',
+  'skirmish.size.small': 'Petite',
+  'skirmish.size.medium': 'Moyenne',
+  'skirmish.size.large': 'Grande',
+  'skirmish.size.huge': 'Immense',
+  'skirmish.name': 'Bataille Personnalisée',
+  'skirmish.subtitle': '{size} · {biome}',
+  'skirmish.briefing': 'Un déploiement sur mesure — votre taille, votre biome, votre difficulté. Aucune progression '
+    + "de campagne n'est en jeu ici, juste le combat.",
+
+  /* ------------------------------------------------------------------ */
+  /* équipement : armes et blindage                                       */
+  /* ------------------------------------------------------------------ */
+  'weapon.rifle.name': 'Fusil Automatique',
+  'weapon.rifle.desc': 'Arme équilibrée. Dégâts constants sur cible unique, sans faiblesse réelle.',
+  'weapon.shotgun.name': 'Fusil à Pompe Anti-émeute',
+  'weapon.shotgun.desc': 'Cône de cinq plombs. Dévastateur de près, perd fortement en puissance à distance.',
+  'weapon.dualmg.name': 'Autocanon Jumelé',
+  'weapon.dualmg.desc': 'Deux flux jumeaux à cadence de tir bien plus élevée. Dispersion large, dégâts soutenus élevés.',
+  'weapon.rocket.name': 'Lance-Roquettes',
+  'weapon.rocket.desc': 'Lent et lourd, mais explosif — élimine les amas que les tourelles seules ne peuvent réduire.',
+  'armor.tier0.name': 'Sans Blindage',
+  'armor.tier1.name': 'Gilet Blindé',
+  'armor.tier2.name': 'Blindage Composite',
+  'armor.tier3.name': 'Plaques Exo',
+
+  /* ------------------------------------------------------------------ */
   /* relic upgrades                                                       */
   /* ------------------------------------------------------------------ */
   'relicUpgrade.category.core.label': 'Noyau du réacteur',
@@ -341,11 +385,13 @@ export const fr: Record<string, string> = {
   'game.place.solidRock': 'Roche solide',
   'game.place.occupied': 'Occupé',
   'game.place.tooCloseCore': 'Trop près du noyau',
+  'game.place.playerInWay': 'Le personnage est sur le passage',
   'game.place.tooCloseGate': "Trop près d'une porte de la ruche",
   'game.place.needsOreSeam': 'Doit être placé sur une veine de minerai',
   'game.place.seamExtractorOnly': 'Veine de minerai — seuls les extracteurs peuvent être posés ici',
   'game.banner.finalWave': 'VAGUE FINALE — {desc}',
   'game.banner.wave': 'VAGUE {n} / {total}',
+  'game.wave.composition': '{count}× {name}',
   'game.banner.remnantTurns': 'LES RESCAPÉS SE RETOURNENT',
   'game.banner.stragglersMany': '{n} retardataires chargent le noyau',
   'game.banner.stragglersOne': '{n} retardataire charge le noyau',
@@ -389,10 +435,14 @@ export const fr: Record<string, string> = {
   'touchHud.button.build': 'CONSTRUIRE',
   'touchHud.button.start': 'DÉMARRER',
   'touchHud.drawer.construct': 'CONSTRUCTION',
+  'touchHud.drawer.resources': '◆ {ore}   ✦ {essence}',
+  'touchHud.drawer.costOreEssence': '{ore}+{essence}',
+  'touchHud.drawer.costOre': '{ore}',
   'touchHud.placement.tapToPlace': 'TOUCHEZ POUR PLACER',
   'touchHud.placement.cannotBuildHere': 'IMPOSSIBLE DE CONSTRUIRE ICI',
   'touchHud.mine.holdToMine': 'MAINTENIR SUR LE FILON POUR MINER',
   'touchHud.menu.repair': 'RÉPARER',
+  'touchHud.menu.repairPercent': '{pct}%',
   'touchHud.menu.sell': 'VENDRE',
   'touchHud.menu.close': 'FERMER',
   'touchHud.menu.targeting.first': 'PREMIÈRE',
@@ -418,6 +468,10 @@ export const fr: Record<string, string> = {
   'hud.buildBar.legendBuild': 'Clic gauche — placer   ·   Clic droit — annuler   ·   E — réparer   ·   T — ciblage',
   'hud.buildBar.legendNormal': 'WASD — déplacement   ·   Clic gauche — tirer   ·   Clic droit — miner   ·   SHIFT — ruée   ·   '
     + 'Q — vendre   ·   E — réparer   ·   TAB — stats',
+  'build.category.resources': 'Ressources',
+  'build.category.towers': 'Tourelles',
+  'build.category.defence': 'Défense',
+  'hud.buildBar.legendSections': 'Z/X/C section   ·   1-8 structure   ·   WASD déplacement   ·   Clic gauche tirer   ·   Clic droit miner   ·   Q vendre   ·   TAB statistiques',
   'hud.rail.coreIntegrity': 'INTÉGRITÉ DU NOYAU',
   'hud.rail.chassis': 'CHÂSSIS',
   'hud.rail.overheated': 'ARME SURCHAUFFÉE',
@@ -480,14 +534,18 @@ export const fr: Record<string, string> = {
   'hud.telemetry.elapsed': 'Temps écoulé',
   'hud.telemetry.entities': 'Entités',
   'hud.telemetry.entitiesValue': '{e}e {b}b {p}p',
+  'hud.telemetry.fps': 'FPS',
+  'hud.telemetry.waveComposition': '{count}× {name}',
   'hud.telemetry.nextWave': 'VAGUE SUIVANTE',
 
   /* ------------------------------------------------------------------ */
   /* screens.ts                                                           */
   /* ------------------------------------------------------------------ */
+  'screens.boot.title': 'SWARM',
   'screens.boot.subtitle': 'tenez la ligne',
   'screens.boot.compiling': 'compilation des systèmes procéduraux',
 
+  'screens.title.title': 'SWARM',
   'screens.title.subtitle': 'tenez la ligne',
   'screens.title.pitch': 'Un seul noyau de réacteur contre une ruche sans fin. Exploitez les veines, murez les accès et '
     + "réduisez l'essaim en quelque chose que vous pouvez dépenser. Chaque vague est un compte à rebours vers celle qui termine le secteur.",
@@ -498,11 +556,13 @@ export const fr: Record<string, string> = {
   'screens.title.replay': 'Rejouer · {index}. {name}',
   'screens.title.continue': 'Continuer · {index}. {name}',
   'screens.title.sectorSelect': 'Sélection de secteur',
+  'screens.title.sectorPip': '{index}. {name}',
   'screens.title.newCampaign': 'Nouvelle campagne',
   'screens.title.endlessBest': 'Sans fin · meilleure vague {best}',
   'screens.title.endlessMode': 'Mode sans fin',
   'screens.title.armoury': 'Arsenal · {relics} ⬢',
   'screens.title.achievements': 'Hauts faits · {unlocked}/{total}',
+  'screens.title.customBattle': 'Bataille personnalisée',
   'screens.title.settings': 'Paramètres',
   'screens.title.stats.runs': 'Parties',
   'screens.title.stats.sectorsCleared': 'Secteurs nettoyés',
@@ -511,9 +571,10 @@ export const fr: Record<string, string> = {
   'screens.title.stats.oreMined': 'Minerai extrait',
   'screens.title.stats.bestWave': 'Meilleure vague',
   'screens.title.hintBar': 'WASD déplacement · Clic gauche tirer · Clic droit miner · touches numériques construire · '
-    + 'SHIFT ruée · TAB stats · ESC pause',
+    + 'SHIFT ruée · G équipement · TAB stats · ESC pause',
 
   'screens.levelSelect.heading': 'Sélection de secteur',
+  'screens.levelSelect.cardTitle': '{index}. {name}',
   'screens.levelSelect.intro': 'Secteurs nettoyés : {cleared}. Nettoyer un secteur débloque définitivement le suivant, vous '
     + "pouvez donc reprendre à cet endroit quand vous voulez. La carte est régénérée à chaque déploiement — recommencer un "
     + "secteur n'est jamais le même combat.",
@@ -523,21 +584,26 @@ export const fr: Record<string, string> = {
   'screens.levelSelect.startHere': 'COMMENCER ICI',
   'screens.levelSelect.unlockedContinue': '▶ DÉBLOQUÉ — CONTINUER ICI',
   'screens.levelSelect.lockedBadge': '🔒 VERROUILLÉ',
+  'screens.levelSelect.ngTier': 'Palier New Game+ — ennemis x{mult}',
   'screens.levelSelect.back': 'Retour',
 
   'screens.armoury.heading': 'Arsenal',
   'screens.armoury.intro': 'Les reliques proviennent du nettoyage des secteurs, des boss abattus et des hauts faits obtenus. '
     + 'Tout ce qui est acheté ici est permanent et s\'applique à chaque partie à venir.',
+  'screens.armoury.relicAmount': '{relics} ⬢',
   'screens.armoury.walletSub': 'RELIQUES DISPONIBLES<br>{spent} investies · {earned} gagnées au total',
   'screens.armoury.effectMaxed': 'MAX — {owned}',
+  'screens.armoury.effectUpgrade': '{owned}   →   {next}',
   'screens.armoury.effectPerRank': 'Par rang : {perk}',
   'screens.armoury.maxButton': '✔ MAX',
+  'screens.armoury.costButton': '{cost} ⬢',
   'screens.armoury.back': 'Retour',
   'screens.armoury.refundAll': 'Tout rembourser',
   'screens.armoury.refundConfirm': 'Rembourser toutes les améliorations et récupérer {relics} reliques ?',
 
   'screens.endlessSelect.subtitle': 'sans vague finale',
   'screens.endlessSelect.heading': 'Sans fin',
+  'screens.endlessSelect.cardTitle': '{index}. {name}',
   'screens.endlessSelect.intro': "La ruche ne s'arrête jamais. Les vagues s'intensifient sans fin et un boss arrive toutes les "
     + 'dix vagues. Il n\'y a pas de victoire ici — seulement votre progression, et les reliques que vous en ramenez.',
   'screens.endlessSelect.meta': "{gates} portes de la ruche · {types} types d'ennemis<br><br>Multiplicateur de difficulté "
@@ -546,11 +612,25 @@ export const fr: Record<string, string> = {
   'screens.endlessSelect.noRecord': 'AUCUN RECORD POUR L\'INSTANT',
   'screens.endlessSelect.back': 'Retour',
 
+  'screens.customBattle.subtitle': 'vos règles',
+  'screens.customBattle.heading': 'Bataille Personnalisée',
+  'screens.customBattle.intro': 'Configurez une carte ponctuelle — taille, biome, difficulté, portes de la ruche — '
+    + "et déployez-vous avec tout déjà débloqué. Rien ici n'affecte la progression de la campagne ; c'est un "
+    + 'combat pour lui-même.',
+  'screens.customBattle.size': 'Taille de la carte',
+  'screens.customBattle.biome': 'Biome',
+  'screens.customBattle.difficulty': 'Palier de difficulté — ennemis x{mult}',
+  'screens.customBattle.gates': 'Portes de la ruche',
+  'screens.customBattle.deploy': 'Déployer',
+  'screens.customBattle.back': 'Retour',
+
   'screens.achievements.heading': 'Hauts faits',
   'screens.achievements.intro': '{unlocked} sur {total} débloqués. Chaque haut fait débloqué accorde un bonus permanent '
     + 'appliqué au début de chaque partie — les bonus se cumulent.',
   'screens.achievements.hiddenName': 'Haut fait caché',
   'screens.achievements.hiddenDesc': 'Découvrez-le sur le terrain.',
+  'screens.achievements.perkPrefix': '⬆ {perk}',
+  'screens.achievements.progress': '{prog} / {goal}',
   'screens.achievements.back': 'Retour',
 
   'screens.settings.heading': 'Paramètres',
@@ -598,6 +678,7 @@ export const fr: Record<string, string> = {
 
   'screens.pause.heading': 'Pause',
   'screens.pause.resume': 'Reprendre',
+  'screens.pause.loadout': 'Équipement',
   'screens.pause.achievements': 'Hauts faits',
   'screens.pause.settings': 'Paramètres',
   'screens.pause.restartSector': 'Recommencer le secteur',
@@ -607,6 +688,21 @@ export const fr: Record<string, string> = {
   'screens.pause.abandonConfirm': 'Abandonner la partie ? Toute progression sauvegardée pour cette partie sera perdue.',
   'screens.pause.hintCanSave': 'ESC pour reprendre · la partie se sauvegarde automatiquement au début de chaque phase de construction',
   'screens.pause.hintCannotSave': 'ESC pour reprendre · la sauvegarde est disponible pendant les phases de construction',
+
+  'screens.loadout.heading': 'Équipement',
+  'screens.loadout.intro': "L'essence dépensée ici achète des armes et une armure pour votre châssis — cela se "
+    + 'conserve entre les secteurs de cette tentative de campagne, comme la technologie, mais ce n\'est pas un '
+    + "déblocage permanent comme dans l'Arsenal.",
+  'screens.loadout.essence': '{essence} ✦',
+  'screens.loadout.weapons': 'Armes',
+  'screens.loadout.equipped': 'ÉQUIPÉ',
+  'screens.loadout.equip': 'ÉQUIPER',
+  'screens.loadout.costButton': '{cost} ✦',
+  'screens.loadout.armor': 'Blindage',
+  'screens.loadout.armorHp': '+{hp} PV max',
+  'screens.loadout.worn': 'PORTÉ',
+  'screens.loadout.locked': 'VERROUILLÉ',
+  'screens.loadout.close': 'Fermer',
 
   'screens.tutorial.heading': 'Comment jouer',
   'screens.tutorial.moveTitle': 'Se déplacer',
@@ -630,11 +726,15 @@ export const fr: Record<string, string> = {
 
   'screens.victory.subtitleCampaign': 'campagne terminée',
   'screens.victory.subtitleSector': 'secteur sécurisé',
+  'screens.victory.subtitleSkirmish': 'bataille personnalisée remportée',
   'screens.victory.titleCampaign': 'La ruche est silencieuse',
   'screens.victory.titleSector': 'Secteur sécurisé',
+  'screens.victory.titleSkirmish': 'Bataille Gagnée',
   'screens.victory.flavorCampaign': 'Le Dévoreur de mondes n\'est plus que ferraille et la gorge s\'effondre derrière vous. '
     + 'Chaque haut fait obtenu est permanent — recommencez, et vous repartirez plus fort.',
   'screens.victory.flavorSector': '{level} est nettoyé. Vos technologies et déblocages se reportent sur la suite.',
+  'screens.victory.flavorSkirmish': "Votre configuration a tenu bon. Aucune progression de campagne n'était en jeu "
+    + 'ici — seulement les reliques gagnées.',
   'screens.victory.progressSaved': '✔ <strong>Progression sauvegardée.</strong> Le secteur {index} — {name} — est débloqué. '
     + 'Vous pouvez quitter maintenant et reprendre directement à cet endroit la prochaine fois.',
   'screens.victory.relicAward': '⬢ <strong>+{award} reliques</strong> — {total} en réserve. Dépensez-les à l\'Arsenal pour '
@@ -650,6 +750,7 @@ export const fr: Record<string, string> = {
   'screens.victory.stats.time': 'Temps',
   'screens.victory.runTech': '<strong>Technologies de la partie :</strong> {list}',
   'screens.victory.advance': 'Passer au secteur suivant',
+  'screens.victory.battleAgain': 'Combattre à nouveau',
   'screens.victory.returnToTitle': "Retour à l'écran-titre",
 
   'screens.defeat.subtitleEndless': 'partie terminée',
@@ -670,5 +771,6 @@ export const fr: Record<string, string> = {
   'screens.defeat.stats.time': 'Temps',
   'screens.defeat.runAgain': 'Recommencer',
   'screens.defeat.retrySector': 'Retenter le secteur',
+  'screens.defeat.retryBattle': 'Retenter la bataille',
   'screens.defeat.returnToTitle': "Retour à l'écran-titre",
 };

@@ -2,12 +2,11 @@ import './style.css';
 import { audio } from './core/audio';
 import { Input } from './core/input';
 import { saveNow, clearRun } from './core/save';
-import { BUILDINGS } from './data/buildings';
-import { LEVELS } from './data/levels';
+import { LEVELS, type LevelDef } from './data/levels';
 import { achievementName, achievementDesc } from './data/achievements';
 import { levelName } from './data/levels';
 import type { TechCard } from './data/tech';
-import { Game } from './game/game';
+import { Game, type GameMode } from './game/game';
 import { Hud } from './render/hud';
 import { Renderer } from './render/renderer';
 import { Screens, type ResumeInfo } from './ui/screens';
@@ -97,10 +96,11 @@ let runActive = false;
 const screens = new Screens(uiRoot, {
   onStartLevel: (index, fresh) => beginLevel(index, fresh),
   onStartEndless: (index) => beginLevel(index, true, 'endless'),
+  onStartSkirmish: (level) => beginLevel(level, true, 'skirmish'),
   onResumeRun: () => resumeRun(),
   onSaveAndQuit: () => saveAndQuit(),
   onResume: () => { state = 'playing'; game.frozen = false; },
-  onRestart: () => beginLevel(game.levelIndex, true, game.mode),
+  onRestart: () => beginLevel(game.mode === 'skirmish' ? game.level : game.levelIndex, true, game.mode),
   onQuitToTitle: () => abandonToTitle(),
   onPickTech: (card: TechCard) => {
     game.takeTech(card);
@@ -199,7 +199,7 @@ function saveAndQuit() {
   screens.showTitle(game.progress, resumeInfo());
 }
 
-function beginLevel(index: number, fresh: boolean, mode: 'campaign' | 'endless' = 'campaign') {
+function beginLevel(index: number | LevelDef, fresh: boolean, mode: GameMode = 'campaign') {
   audio.unlock();
   applySettings();
   // Starting anything new invalidates a stored run.
@@ -252,7 +252,7 @@ game.onDraft = (cards) => {
 function overHud(x: number, y: number): boolean {
   const w = renderer.width, h = renderer.height;
   if (y < 116) return true;                       // top bar + wave tracker
-  if (y > h - 112) return true;                   // build bar + legend
+  if (y > h - 142) return true;                   // section tabs + build bar + legend
   if (x > w - 200 && y > h - 200) return true;    // minimap
   if (x < 210 && y > h - 230) return true;        // status rail
   return false;
@@ -266,19 +266,26 @@ canvas.addEventListener('pointerdown', (e) => {
   const mx = e.clientX - r.left;
   const my = e.clientY - r.top;
 
+  // Section tabs sit directly above the slots, so they are tested first.
+  const tab = hud.hitCategoryTab(mx, my);
+  if (tab) {
+    if (game.buildCategory !== tab) {
+      game.buildCategory = tab;
+      game.selectBuilding(null);
+      audio.play('uiClick');
+    }
+    return;
+  }
+
   for (const slot of hud.buildSlots) {
     if (mx >= slot.x && mx <= slot.x + slot.w && my >= slot.y && my <= slot.y + slot.h) {
-      const def = BUILDINGS[slot.kind];
       if (game.buildKind === slot.kind) {
-        game.buildKind = null;
-        game.cursorMode = 'normal';
+        game.selectBuilding(null);
         audio.play('uiBack');
       } else {
-        game.buildKind = slot.kind;
-        game.cursorMode = 'build';
+        game.selectBuilding(slot.kind);
         audio.play('uiClick');
       }
-      void def;
       return;
     }
   }
@@ -294,7 +301,7 @@ function togglePause() {
     state = 'paused';
     game.frozen = true;
     audio.play('uiBack');
-    screens.showPause(game.progress, game.inBuildPhase);
+    screens.showPause(game, game.canSaveRun);
   } else if (state === 'paused') {
     screens.close();
     state = 'playing';
@@ -302,8 +309,18 @@ function togglePause() {
   }
 }
 
+/** Also reachable from the pause menu — this is the direct-from-play shortcut. */
+function openLoadout() {
+  if (state !== 'playing') return;
+  state = 'modal';
+  game.frozen = true;
+  audio.play('uiBack');
+  screens.showLoadout(game, () => { state = 'playing'; game.frozen = false; });
+}
+
 addEventListener('keydown', (e) => {
   if (e.code === 'Escape') togglePause();
+  if (e.code === 'KeyG') openLoadout();
   if (e.code === 'Tab') {
     e.preventDefault();
     hud.showStats = !hud.showStats;
@@ -392,7 +409,7 @@ function handleTouch() {
         game.frozen = true;
         touch.reset();
         audio.play('uiBack');
-        screens.showPause(game.progress, game.inBuildPhase);
+        screens.showPause(game, game.canSaveRun);
         break;
       case 'build':
         if (touch.drawerOpen) {
@@ -641,6 +658,15 @@ function stepFrame(now: number) {
 
   updateOrientationGate();
 
+  if (!touchMode) {
+    keyboard.pollGamepad();
+    // A gamepad has no cursor to aim with, so it rides the same auto-aim
+    // path touch uses — but only while it's actually the device in the
+    // player's hands, so picking the mouse back up restores manual aim.
+    game.autoAim = game.progress.data.settings.autoAim || keyboard.gamepadActive;
+    if (keyboard.gamepadStartPressed) togglePause();
+  }
+
   const input = activeInput();
   hud.lastMouse.x = input.mouseX;
   hud.lastMouse.y = input.mouseY;
@@ -656,6 +682,12 @@ function stepFrame(now: number) {
   // TouchInput already hit-tests its own buttons and stick zone before any of
   // this runs, so it doesn't need the overHud check at all.
   input.uiCaptured = modal || (!touchMode && state === 'playing' && overHud(input.mouseX, input.mouseY));
+  hud.uiCaptured = input.uiCaptured;
+  // The custom aim reticle stands in for the OS pointer over the game world
+  // (see #stage's `cursor: none`); restore the real pointer over HUD chrome
+  // so hovering the build bar reads as hovering a UI, not aiming through it.
+  // Touch has its own `body.touch #stage` cursor rule and no mouse to move here.
+  if (!touchMode) canvas.style.cursor = input.uiCaptured ? 'pointer' : 'none';
   if (modal && touchMode) touch.reset();
 
   handleTouch();

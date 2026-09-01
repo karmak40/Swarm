@@ -41,6 +41,10 @@ export const es: Record<string, string> = {
   'building.repairbay.desc': 'Suelda continuamente todas las estructuras a su alcance, incluida ella misma.',
   'building.shield.name': 'Pilón de la Égida',
   'building.shield.desc': 'Envuelve las estructuras cercanas en una barrera regenerativa que absorbe los golpes primero.',
+  'building.forcefield.name': 'Emisor de Campo',
+  'building.forcefield.desc': 'Levanta una cúpula que intercepta el fuego a distancia — el cuerpo a cuerpo sigue '
+    + 'pasando. Necesita energía para cargarse y más para mantenerse; suficiente daño la hace colapsar, y cada '
+    + 'recarga posterior tarda más que la primera.',
 
   /* ------------------------------------------------------------------ */
   /* enemies                                                              */
@@ -64,6 +68,12 @@ export const es: Record<string, string> = {
   'enemy.blob.name': 'Divisor',
   'enemy.blob.desc': 'Al morir, estalla en tres masas más pequeñas.',
   'enemy.blobling.name': 'Masilla',
+  'enemy.queen.name': 'Reina Progenitora',
+  'enemy.queen.desc': 'Nunca lucha directamente. Cada pocos segundos vomita nuevas crías — mátala rápido o la oleada nunca mermará.',
+  'enemy.scorpion.name': 'Escorpión de Arena',
+  'enemy.scorpion.desc': 'Se acerca a paso firme, luego se yergue y embiste con el aguijón hacia el núcleo. El amague es tu única advertencia.',
+  'enemy.wasp.name': 'Avispa del Vacío',
+  'enemy.wasp.desc': 'Vuela y mantiene las distancias mientras pica — la primera voladora que no se limita a cerrar distancia para el cuerpo a cuerpo.',
   'enemy.tyrant.name': 'TIRANO DEL ENJAMBRE',
   'enemy.tyrant.desc': 'La madre de la cría. Golpea el suelo y vomita drones frescos.',
   'enemy.devourer.name': 'EL DEVORADOR',
@@ -236,6 +246,40 @@ export const es: Record<string, string> = {
     + 'que hayas desbloqueado.',
 
   /* ------------------------------------------------------------------ */
+  /* biomas y batalla personalizada (skirmish)                           */
+  /* ------------------------------------------------------------------ */
+  'biome.ash': 'Cenizas',
+  'biome.jungle': 'Podredumbre Verde',
+  'biome.ice': 'Glaciar',
+  'biome.desert': 'Los Yermos de Sal',
+  'biome.blood': 'Necromarea',
+  'biome.void': 'La Garganta del Enjambre',
+  'skirmish.size.small': 'Pequeño',
+  'skirmish.size.medium': 'Mediano',
+  'skirmish.size.large': 'Grande',
+  'skirmish.size.huge': 'Enorme',
+  'skirmish.name': 'Batalla Personalizada',
+  'skirmish.subtitle': '{size} · {biome}',
+  'skirmish.briefing': 'Un despliegue a medida — tu tamaño, tu bioma, tu dificultad. Aquí no está en juego el '
+    + 'progreso de la campaña, solo el combate.',
+
+  /* ------------------------------------------------------------------ */
+  /* equipo: armas y blindaje                                             */
+  /* ------------------------------------------------------------------ */
+  'weapon.rifle.name': 'Fusil Automático',
+  'weapon.rifle.desc': 'Arma equilibrada. Daño constante a un solo objetivo, sin debilidades reales.',
+  'weapon.shotgun.name': 'Escopeta Antidisturbios',
+  'weapon.shotgun.desc': 'Cono de cinco perdigones. Devastadora de cerca, pierde fuerza drásticamente a distancia.',
+  'weapon.dualmg.name': 'Autocañón Doble',
+  'weapon.dualmg.desc': 'Dos flujos gemelos con una cadencia de fuego mucho mayor. Dispersión amplia, alto daño sostenido.',
+  'weapon.rocket.name': 'Lanzacohetes',
+  'weapon.rocket.desc': 'Lento y pesado, pero explosivo — despeja aglomeraciones que las torretas solas no pueden reducir.',
+  'armor.tier0.name': 'Sin Blindaje',
+  'armor.tier1.name': 'Chaleco Blindado',
+  'armor.tier2.name': 'Blindaje Compuesto',
+  'armor.tier3.name': 'Placas Exo',
+
+  /* ------------------------------------------------------------------ */
   /* relic upgrades                                                       */
   /* ------------------------------------------------------------------ */
   'relicUpgrade.category.core.label': 'Núcleo del Reactor',
@@ -341,11 +385,13 @@ export const es: Record<string, string> = {
   'game.place.solidRock': 'Roca sólida',
   'game.place.occupied': 'Ocupado',
   'game.place.tooCloseCore': 'Demasiado cerca del núcleo',
+  'game.place.playerInWay': 'El personaje está en el camino',
   'game.place.tooCloseGate': 'Demasiado cerca de una puerta del enjambre',
   'game.place.needsOreSeam': 'Debe colocarse sobre una veta de mineral',
   'game.place.seamExtractorOnly': 'Veta de mineral — aquí solo caben extractores',
   'game.banner.finalWave': 'OLEADA FINAL — {desc}',
   'game.banner.wave': 'OLEADA {n} / {total}',
+  'game.wave.composition': '{count}× {name}',
   'game.banner.remnantTurns': 'LOS RESTOS DEL ENJAMBRE ATACAN',
   'game.banner.stragglersMany': '{n} rezagados cargan contra el núcleo',
   'game.banner.stragglersOne': '{n} rezagado carga contra el núcleo',
@@ -389,10 +435,14 @@ export const es: Record<string, string> = {
   'touchHud.button.build': 'CONSTRUIR',
   'touchHud.button.start': 'EMPEZAR',
   'touchHud.drawer.construct': 'CONSTRUCCIÓN',
+  'touchHud.drawer.resources': '◆ {ore}   ✦ {essence}',
+  'touchHud.drawer.costOreEssence': '{ore}+{essence}',
+  'touchHud.drawer.costOre': '{ore}',
   'touchHud.placement.tapToPlace': 'TOCA PARA COLOCAR',
   'touchHud.placement.cannotBuildHere': 'NO SE PUEDE CONSTRUIR AQUÍ',
   'touchHud.mine.holdToMine': 'MANTÉN PULSADO SOBRE LA VETA PARA MINAR',
   'touchHud.menu.repair': 'REPARAR',
+  'touchHud.menu.repairPercent': '{pct}%',
   'touchHud.menu.sell': 'VENDER',
   'touchHud.menu.close': 'CERRAR',
   'touchHud.menu.targeting.first': 'PRIMERO',
@@ -418,6 +468,10 @@ export const es: Record<string, string> = {
   'hud.buildBar.legendBuild': 'CLIC IZQ. colocar   ·   CLIC DER. cancelar   ·   E reparar   ·   T objetivo',
   'hud.buildBar.legendNormal': 'WASD moverse   ·   CLIC IZQ. disparar   ·   CLIC DER. extraer   ·   SHIFT impulso   ·   '
     + 'Q vender   ·   E reparar   ·   TAB estadísticas',
+  'build.category.resources': 'Recursos',
+  'build.category.towers': 'Torres',
+  'build.category.defence': 'Defensa',
+  'hud.buildBar.legendSections': 'Z/X/C sección   ·   1-8 estructura   ·   WASD moverse   ·   CLIC IZQ. disparar   ·   CLIC DER. extraer   ·   Q vender   ·   TAB estadísticas',
   'hud.rail.coreIntegrity': 'INTEGRIDAD DEL NÚCLEO',
   'hud.rail.chassis': 'CHASIS',
   'hud.rail.overheated': 'ARMA SOBRECALENTADA',
@@ -480,14 +534,18 @@ export const es: Record<string, string> = {
   'hud.telemetry.elapsed': 'Transcurrido',
   'hud.telemetry.entities': 'Entidades',
   'hud.telemetry.entitiesValue': '{e}e {b}c {p}p',
+  'hud.telemetry.fps': 'FPS',
+  'hud.telemetry.waveComposition': '{count}× {name}',
   'hud.telemetry.nextWave': 'PRÓXIMA OLEADA',
 
   /* ------------------------------------------------------------------ */
   /* screens.ts                                                           */
   /* ------------------------------------------------------------------ */
+  'screens.boot.title': 'SWARM',
   'screens.boot.subtitle': 'mantén la línea',
   'screens.boot.compiling': 'compilando sistemas procedurales',
 
+  'screens.title.title': 'SWARM',
   'screens.title.subtitle': 'mantén la línea',
   'screens.title.pitch': 'Un único núcleo de reactor contra un enjambre interminable. Extrae las vetas, amuralla los accesos '
     + 'y convierte al enjambre en algo que puedas gastar. Cada oleada es una cuenta atrás hacia la que pondrá fin al sector.',
@@ -498,11 +556,13 @@ export const es: Record<string, string> = {
   'screens.title.replay': 'Repetir · {index}. {name}',
   'screens.title.continue': 'Continuar · {index}. {name}',
   'screens.title.sectorSelect': 'Selección de sector',
+  'screens.title.sectorPip': '{index}. {name}',
   'screens.title.newCampaign': 'Nueva campaña',
   'screens.title.endlessBest': 'Infinito · mejor oleada {best}',
   'screens.title.endlessMode': 'Modo infinito',
   'screens.title.armoury': 'Arsenal · {relics} ⬢',
   'screens.title.achievements': 'Logros · {unlocked}/{total}',
+  'screens.title.customBattle': 'Batalla personalizada',
   'screens.title.settings': 'Ajustes',
   'screens.title.stats.runs': 'Partidas',
   'screens.title.stats.sectorsCleared': 'Sectores superados',
@@ -511,9 +571,10 @@ export const es: Record<string, string> = {
   'screens.title.stats.oreMined': 'Mineral extraído',
   'screens.title.stats.bestWave': 'Mejor oleada',
   'screens.title.hintBar': 'WASD moverse · CLIC IZQ. disparar · CLIC DER. extraer · teclas numéricas construir · SHIFT impulso · '
-    + 'TAB estadísticas · ESC pausa',
+    + 'G equipo · TAB estadísticas · ESC pausa',
 
   'screens.levelSelect.heading': 'Selección de Sector',
+  'screens.levelSelect.cardTitle': '{index}. {name}',
   'screens.levelSelect.intro': 'Sectores superados: {cleared}. Superar un sector desbloquea el siguiente de forma permanente, '
     + 'así que siempre puedes continuar desde ahí. El mapa se genera de nuevo en cada despliegue — repetir un sector nunca '
     + 'es la misma batalla.',
@@ -523,21 +584,26 @@ export const es: Record<string, string> = {
   'screens.levelSelect.startHere': 'EMPEZAR AQUÍ',
   'screens.levelSelect.unlockedContinue': '▶ DESBLOQUEADO — CONTINÚA AQUÍ',
   'screens.levelSelect.lockedBadge': '🔒 BLOQUEADO',
+  'screens.levelSelect.ngTier': 'Nivel New Game+ — enemigos x{mult}',
   'screens.levelSelect.back': 'Atrás',
 
   'screens.armoury.heading': 'Arsenal',
   'screens.armoury.intro': 'Las reliquias se consiguen superando sectores, derrotando jefes y desbloqueando logros. '
     + 'Todo lo que compres aquí es permanente y se aplica a partir de ahora en cada partida.',
+  'screens.armoury.relicAmount': '{relics} ⬢',
   'screens.armoury.walletSub': 'RELIQUIAS DISPONIBLES<br>{spent} invertidas · {earned} ganadas en total',
   'screens.armoury.effectMaxed': 'AL MÁXIMO — {owned}',
+  'screens.armoury.effectUpgrade': '{owned}   →   {next}',
   'screens.armoury.effectPerRank': 'Por rango: {perk}',
   'screens.armoury.maxButton': '✔ MÁX',
+  'screens.armoury.costButton': '{cost} ⬢',
   'screens.armoury.back': 'Atrás',
   'screens.armoury.refundAll': 'Reembolsar todo',
   'screens.armoury.refundConfirm': '¿Reembolsar todas las mejoras y recuperar {relics} reliquias?',
 
   'screens.endlessSelect.subtitle': 'sin última oleada',
   'screens.endlessSelect.heading': 'Infinito',
+  'screens.endlessSelect.cardTitle': '{index}. {name}',
   'screens.endlessSelect.intro': 'El enjambre nunca se detiene. Las oleadas escalan sin fin y cada décima trae un jefe. '
     + 'Aquí no hay victoria — solo hasta dónde llegues y las reliquias que consigas traer de vuelta.',
   'screens.endlessSelect.meta': '{gates} puertas del enjambre · {types} tipos de enemigos<br><br>Multiplicador de dificultad '
@@ -546,11 +612,24 @@ export const es: Record<string, string> = {
   'screens.endlessSelect.noRecord': 'SIN RÉCORD AÚN',
   'screens.endlessSelect.back': 'Atrás',
 
+  'screens.customBattle.subtitle': 'tus reglas',
+  'screens.customBattle.heading': 'Batalla Personalizada',
+  'screens.customBattle.intro': 'Configura un mapa único — tamaño, bioma, dificultad, puertas del enjambre — y '
+    + 'despliega con todo ya desbloqueado. Nada aquí afecta el progreso de la campaña; es una batalla por sí misma.',
+  'screens.customBattle.size': 'Tamaño del mapa',
+  'screens.customBattle.biome': 'Bioma',
+  'screens.customBattle.difficulty': 'Nivel de dificultad — enemigos x{mult}',
+  'screens.customBattle.gates': 'Puertas del enjambre',
+  'screens.customBattle.deploy': 'Desplegar',
+  'screens.customBattle.back': 'Atrás',
+
   'screens.achievements.heading': 'Logros',
   'screens.achievements.intro': 'Desbloqueados: {unlocked} de {total}. Cada logro desbloqueado otorga una bonificación '
     + 'permanente que se aplica desde el inicio de cada partida — y se acumulan.',
   'screens.achievements.hiddenName': 'Logro Oculto',
   'screens.achievements.hiddenDesc': 'Descúbrelo en combate.',
+  'screens.achievements.perkPrefix': '⬆ {perk}',
+  'screens.achievements.progress': '{prog} / {goal}',
   'screens.achievements.back': 'Atrás',
 
   'screens.settings.heading': 'Ajustes',
@@ -598,6 +677,7 @@ export const es: Record<string, string> = {
 
   'screens.pause.heading': 'Pausa',
   'screens.pause.resume': 'Reanudar',
+  'screens.pause.loadout': 'Equipo',
   'screens.pause.achievements': 'Logros',
   'screens.pause.settings': 'Ajustes',
   'screens.pause.restartSector': 'Reiniciar sector',
@@ -607,6 +687,21 @@ export const es: Record<string, string> = {
   'screens.pause.abandonConfirm': '¿Abandonar la partida? Se descartará cualquier progreso guardado de esta partida.',
   'screens.pause.hintCanSave': 'ESC para reanudar · la partida se guarda automáticamente al inicio de cada fase de construcción',
   'screens.pause.hintCannotSave': 'ESC para reanudar · guardar solo está disponible durante las fases de construcción',
+
+  'screens.loadout.heading': 'Equipo',
+  'screens.loadout.intro': 'La esencia gastada aquí compra armas y blindaje para tu chasis — se mantiene entre '
+    + 'sectores en este intento de campaña, igual que la tecnología, pero no es un desbloqueo permanente como en '
+    + 'el Arsenal.',
+  'screens.loadout.essence': '{essence} ✦',
+  'screens.loadout.weapons': 'Armas',
+  'screens.loadout.equipped': 'EQUIPADO',
+  'screens.loadout.equip': 'EQUIPAR',
+  'screens.loadout.costButton': '{cost} ✦',
+  'screens.loadout.armor': 'Blindaje',
+  'screens.loadout.armorHp': '+{hp} PV máx.',
+  'screens.loadout.worn': 'PUESTO',
+  'screens.loadout.locked': 'BLOQUEADO',
+  'screens.loadout.close': 'Cerrar',
 
   'screens.tutorial.heading': 'Cómo jugar',
   'screens.tutorial.moveTitle': 'Moverse',
@@ -630,11 +725,15 @@ export const es: Record<string, string> = {
 
   'screens.victory.subtitleCampaign': 'campaña completada',
   'screens.victory.subtitleSector': 'sector asegurado',
+  'screens.victory.subtitleSkirmish': 'batalla personalizada superada',
   'screens.victory.titleCampaign': 'El Enjambre Ha Enmudecido',
   'screens.victory.titleSector': 'Sector Asegurado',
+  'screens.victory.titleSkirmish': 'Batalla Ganada',
   'screens.victory.flavorCampaign': 'El Devoramundos ya es chatarra y la garganta se derrumba a tus espaldas. Cada logro que '
     + 'has conseguido es permanente — vuelve a empezar y lo harás más fuerte.',
   'screens.victory.flavorSector': '{level} está superado. Tus tecnologías y desbloqueos se conservan.',
+  'screens.victory.flavorSkirmish': 'Tu configuración resistió. Aquí no había progreso de campaña en juego — solo '
+    + 'las reliquias que ganaste.',
   'screens.victory.progressSaved': '✔ <strong>Progreso guardado.</strong> El sector {index} — {name} — está desbloqueado. '
     + 'Puedes salir ahora y empezar directamente desde ahí la próxima vez.',
   'screens.victory.relicAward': '⬢ <strong>+{award} reliquias</strong> — {total} acumuladas. Gástalas en el Arsenal en '
@@ -650,6 +749,7 @@ export const es: Record<string, string> = {
   'screens.victory.stats.time': 'Tiempo',
   'screens.victory.runTech': '<strong>Tecnología de la partida:</strong> {list}',
   'screens.victory.advance': 'Avanzar al siguiente sector',
+  'screens.victory.battleAgain': 'Luchar de nuevo',
   'screens.victory.returnToTitle': 'Volver al menú',
 
   'screens.defeat.subtitleEndless': 'partida terminada',
@@ -670,5 +770,6 @@ export const es: Record<string, string> = {
   'screens.defeat.stats.time': 'Tiempo',
   'screens.defeat.runAgain': 'Intentarlo de nuevo',
   'screens.defeat.retrySector': 'Reintentar sector',
+  'screens.defeat.retryBattle': 'Reintentar batalla',
   'screens.defeat.returnToTitle': 'Volver al menú',
 };

@@ -3,6 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "license": "UNLICENSED",
   "description": "SWARM — base building survival against the hive",
   "main": "electron/main.cjs",
   "scripts": {

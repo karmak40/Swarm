@@ -1,6 +1,9 @@
 import { clamp, fmtNum, fmtTime, TAU } from '../core/math';
 import { t as tr } from '../core/i18n';
-import { BUILDINGS, buildingName, buildingDesc, type BuildingKind, type TargetingMode } from '../data/buildings';
+import {
+  BUILDINGS, CATEGORY_KEY, buildCategoryLabel, buildingDesc, buildingName,
+  type BuildCategory, type BuildingKind, type TargetingMode,
+} from '../data/buildings';
 import { ENEMIES, enemyName } from '../data/enemies';
 import { levelName, levelSubtitle } from '../data/levels';
 import { Tile, TILE } from '../game/world';
@@ -32,12 +35,32 @@ function targetingLabel(mode: TargetingMode): string {
 export class Hud {
   /** Build-bar hit rectangles, refreshed each frame for click routing. */
   buildSlots: { kind: BuildingKind; x: number; y: number; w: number; h: number }[] = [];
+  /** Section-tab hit rectangles, same contract as buildSlots. */
+  categoryTabs: { category: BuildCategory; x: number; y: number; w: number; h: number }[] = [];
   /** Compact layout for touch: no build bar, no cursor chrome, thumb zones clear. */
   compact = false;
   /** Extra scale for text and gauges, from the UI scale setting. */
   uiScale = 1;
   /** Notch/Dynamic Island/home-indicator clearance, so corner readouts clear the cutout. */
   insets: SafeInsets = { top: 0, right: 0, bottom: 0, left: 0 };
+
+  /**
+   * `measureText` result cache. Most text here is either genuinely static
+   * (category labels, per-locale strings) or a number that only changes when
+   * the underlying resource does, so re-measuring the same (font, text) pair
+   * every frame is pure waste — keyed on font since size/weight affects width.
+   */
+  private measureCache = new Map<string, number>();
+
+  private measure(ctx: Ctx, text: string): number {
+    const key = ctx.font + '|' + text;
+    let w = this.measureCache.get(key);
+    if (w === undefined) {
+      w = ctx.measureText(text).width;
+      if (this.measureCache.size < 2000) this.measureCache.set(key, w);
+    }
+    return w;
+  }
 
   draw(ctx: Ctx, game: Game, w: number, h: number, fps: number) {
     ctx.save();
@@ -100,10 +123,10 @@ export class Hud {
     ctx.font = `600 ${Math.round(13 * s)}px ${MONO}`;
     ctx.fillStyle = css(0x7fd9ff);
     ctx.fillText(`◆${fmtNum(game.ore)}`, x, row1);
-    x += ctx.measureText(`◆${fmtNum(game.ore)}`).width + Math.round(12 * s);
+    x += this.measure(ctx, `◆${fmtNum(game.ore)}`) + Math.round(12 * s);
     ctx.fillStyle = css(0xb47cff);
     ctx.fillText(`✦${fmtNum(game.essence)}`, x, row1);
-    x += ctx.measureText(`✦${fmtNum(game.essence)}`).width + Math.round(12 * s);
+    x += this.measure(ctx, `✦${fmtNum(game.essence)}`) + Math.round(12 * s);
 
     const eff = game.power.efficiency;
     ctx.fillStyle = css(eff >= 1 ? 0x5cf2a0 : eff > 0.6 ? 0xffb347 : 0xff4f5e);
@@ -213,11 +236,11 @@ export class Hud {
     ctx.font = `600 19px ${MONO}`;
     ctx.fillStyle = css(0xe7f0ff);
     ctx.fillText(value, x + 20, y - 3);
-    const vw = ctx.measureText(value).width;
+    const vw = this.measure(ctx, value);
     ctx.font = `500 9px ${UI_FONT}`;
     ctx.fillStyle = css(0x55667e);
     ctx.fillText(label, x + 20, y + 12);
-    return x + 20 + Math.max(vw, ctx.measureText(label).width) + 34;
+    return x + 20 + Math.max(vw, this.measure(ctx, label)) + 34;
   }
 
   /* ---- wave tracker ---------------------------------------------------- */
@@ -322,22 +345,71 @@ export class Hud {
 
   private buildBar(ctx: Ctx, game: Game, w: number, h: number) {
     this.buildSlots.length = 0;
-    const kinds = game.availableBuildings;
-    if (!kinds.length) return;
+    this.categoryTabs.length = 0;
 
-    // The roster grows as sectors unlock, so the bar shrinks to fit rather than
-    // running under the minimap.
+    const cats = game.activeCategories;
+    if (!cats.length) return;
+    const kinds = game.categoryBuildings(game.buildCategory);
+
+    // Only one section is on screen, so slots keep their full size however far
+    // the roster grows — that is the whole point of grouping them.
     const gap = 6;
     const budget = Math.max(240, w - 96);
-    const slot = Math.max(40, Math.min(62, Math.floor((budget - (kinds.length - 1) * gap) / kinds.length)));
+    const slot = Math.max(44, Math.min(62,
+      Math.floor((budget - Math.max(0, kinds.length - 1) * gap) / Math.max(1, kinds.length))));
     const scale = slot / 62;
-    const totalW = kinds.length * slot + (kinds.length - 1) * gap;
+    const totalW = kinds.length * slot + Math.max(0, kinds.length - 1) * gap;
     const x0 = (w - totalW) / 2;
+    const tabH = 22;
     const y0 = h - slot - 26 - this.insets.bottom;
+    const tabY = y0 - tabH - 6;
 
     ctx.fillStyle = 'rgba(5,8,14,0.6)';
-    ctx.fillRect(0, y0 - 14, w, slot + 40);
+    ctx.fillRect(0, tabY - 8, w, slot + tabH + 54);
 
+    // --- section tabs ---
+    ctx.textAlign = 'center';
+    const tabFont = `600 10px ${UI_FONT}`;
+    ctx.font = tabFont;
+    const tabWidths = cats.map((c) =>
+      Math.round(this.measure(ctx, buildCategoryLabel(c).toUpperCase())) + 40);
+    const tabsW = tabWidths.reduce((a, b) => a + b, 0) + (cats.length - 1) * 4;
+    let tx = (w - tabsW) / 2;
+
+    cats.forEach((cat, i) => {
+      const tw = tabWidths[i];
+      const active = cat === game.buildCategory;
+      this.categoryTabs.push({ category: cat, x: tx, y: tabY, w: tw, h: tabH });
+
+      ctx.fillStyle = active ? rgba(0x46d8ff, 0.2) : 'rgba(10,16,26,0.85)';
+      techRect(ctx, tx, tabY, tw, tabH, 6);
+      ctx.fill();
+      ctx.strokeStyle = active ? css(0x46d8ff) : rgba(0x46d8ff, 0.22);
+      ctx.lineWidth = active ? 1.8 : 1;
+      techRect(ctx, tx, tabY, tw, tabH, 6);
+      ctx.stroke();
+
+      ctx.font = tabFont;
+      ctx.fillStyle = css(active ? 0xffffff : 0x8fa3c0);
+      ctx.fillText(buildCategoryLabel(cat).toUpperCase(), tx + tw / 2, tabY + tabH / 2 + 1);
+
+      // Section key, drawn small in the corner like the slot keys.
+      ctx.textAlign = 'left';
+      ctx.font = `600 8px ${MONO}`;
+      ctx.fillStyle = rgba(0xffffff, active ? 0.55 : 0.3);
+      ctx.fillText(CATEGORY_KEY[cat], tx + 6, tabY + 7);
+      ctx.textAlign = 'center';
+
+      // Count, so you can see a section has more in it without opening it.
+      const n = game.categoryBuildings(cat).length;
+      ctx.font = `600 8px ${MONO}`;
+      ctx.fillStyle = rgba(0xffffff, active ? 0.5 : 0.28);
+      ctx.fillText(String(n), tx + tw - 9, tabY + 7);
+
+      tx += tw + 4;
+    });
+
+    // --- slots in the active section ---
     kinds.forEach((kind, i) => {
       const def = BUILDINGS[kind];
       const x = x0 + i * (slot + gap);
@@ -383,7 +455,7 @@ export class Hud {
 
       ctx.globalAlpha = 1;
 
-      // Hotkey pip.
+      // Slot key — a digit, now meaningful only within this section.
       ctx.textAlign = 'left';
       ctx.font = `600 9px ${MONO}`;
       ctx.fillStyle = rgba(0xffffff, 0.4);
@@ -400,10 +472,21 @@ export class Hud {
     ctx.textAlign = 'center';
     ctx.font = `500 10px ${UI_FONT}`;
     ctx.fillStyle = css(0x55667e);
-    const mode = game.cursorMode === 'sell' ? tr('hud.buildBar.legendSell', 'SELL MODE — click a structure   ·   Q to exit')
-      : game.cursorMode === 'build' ? tr('hud.buildBar.legendBuild', 'LMB place   ·   RMB cancel   ·   E repair   ·   T targeting')
-      : tr('hud.buildBar.legendNormal', 'WASD move   ·   LMB fire   ·   RMB mine   ·   SHIFT dash   ·   Q sell   ·   E repair   ·   TAB stats');
+    const mode = game.cursorMode === 'sell'
+      ? tr('hud.buildBar.legendSell', 'SELL MODE — click a structure   ·   Q to exit')
+      : game.cursorMode === 'build'
+      ? tr('hud.buildBar.legendBuild', 'LMB place   ·   RMB cancel   ·   E repair   ·   T targeting')
+      : tr('hud.buildBar.legendSections',
+          'Z/X/C section   ·   1-8 structure   ·   WASD move   ·   LMB fire   ·   RMB mine   ·   Q sell   ·   TAB stats');
     ctx.fillText(mode, w / 2, h - 12 - this.insets.bottom);
+  }
+
+  /** Hit-test the section tabs. Returns the tapped section, or null. */
+  hitCategoryTab(x: number, y: number): BuildCategory | null {
+    for (const t of this.categoryTabs) {
+      if (x >= t.x && x <= t.x + t.w && y >= t.y && y <= t.y + t.h) return t.category;
+    }
+    return null;
   }
 
   /* ---- minimap --------------------------------------------------------- */
@@ -723,8 +806,8 @@ export class Hud {
 
     // Panel, anchored near the cursor but clamped on screen.
     ctx.font = `500 12px ${UI_FONT}`;
-    let tw = ctx.measureText(title).width;
-    for (const l of lines) tw = Math.max(tw, ctx.measureText(l).width);
+    let tw = this.measure(ctx, title);
+    for (const l of lines) tw = Math.max(tw, this.measure(ctx, l));
     const pad = 12;
     const bw = tw + pad * 2;
     const bh = 26 + lines.length * 17 + pad;
@@ -751,6 +834,8 @@ export class Hud {
   }
 
   lastMouse = { x: 0, y: 0 };
+  /** True while the pointer sits over HUD chrome — see `overHud` in main.ts. */
+  uiCaptured = false;
 
   /* ---- banner ---------------------------------------------------------- */
 
@@ -787,6 +872,10 @@ export class Hud {
   }
 
   private crosshair(ctx: Ctx, game: Game) {
+    // Over the build bar, minimap or status rail the native pointer takes over
+    // (see main.ts toggling canvas.style.cursor) — drawing the aim reticle on
+    // top of UI chrome read as if the game was still targeting through it.
+    if (this.uiCaptured) return;
     const { x, y } = this.lastMouse;
     const build = game.cursorMode !== 'normal';
     const col = game.cursorMode === 'sell' ? 0xff4f5e : build ? 0x46d8ff : 0xffffff;
@@ -818,7 +907,7 @@ export class Hud {
     ctx.textAlign = 'center';
     ctx.font = `600 13px ${UI_FONT}`;
     const txt = game.lastError.text.toUpperCase();
-    const tw = ctx.measureText(txt).width;
+    const tw = this.measure(ctx, txt);
     const y = h - 132;
     ctx.fillStyle = 'rgba(30,6,10,0.92)';
     techRect(ctx, w / 2 - tw / 2 - 16, y - 14, tw + 32, 28, 8);

@@ -9,12 +9,16 @@ import { PKind, Particles } from '../engine/particles';
 import { SpatialHash } from '../engine/spatial';
 import { FlowField } from '../engine/flowfield';
 import {
-  BUILDINGS, BUILD_ORDER, HOTKEY_CODES, REPAIR_COST_PER_HP, SELL_RATIO, buildingName,
-  type BuildingDef, type BuildingKind, type TargetingMode,
+  BUILDINGS, BUILD_ORDER, BUILD_CATEGORIES, CATEGORY_KEY_CODE, HOTKEY_CODES,
+  REPAIR_COST_PER_HP, SELL_RATIO, buildingsInCategory,
+  type BuildCategory, type BuildingDef, type BuildingKind, type TargetingMode,
 } from '../data/buildings';
 import { ENEMIES, enemyName, enemyDesc, type EnemyDef } from '../data/enemies';
-import { ENDLESS_BOSS_INTERVAL, LEVELS, levelName, levelSubtitle, type LevelDef } from '../data/levels';
+import {
+  ENDLESS_BOSS_INTERVAL, LEVELS, levelName, levelSubtitle, ngDifficultyMult, type LevelDef,
+} from '../data/levels';
 import { applyPerk, basePerks, type Perks } from '../data/perks';
+import { WEAPONS, ARMOR_TIERS, type WeaponKind } from '../data/loadout';
 import { RARITY_WEIGHT, TECH_CARDS, techName, techDesc, type TechCard } from '../data/tech';
 import {
   Building, Core, type DamageNumber, Drone, type Effect, Enemy, Pickup,
@@ -22,13 +26,18 @@ import {
 } from './entities';
 import { Progress } from './progress';
 import {
-  clearRun, loadRun, saveRun, RUN_SNAPSHOT_VERSION, type RunSnapshot,
+  clearRun, loadRun, saveRun, type RunSnapshot,
 } from '../core/save';
 import { TILE, Tile, World, type OreNode } from './world';
 import { WaveDirector, type Phase, type WavePlan } from './waves';
+import { buildSnapshot, applySnapshot } from './runSnapshot';
 
-/** Campaign runs end at a scripted boss; endless runs end when the core dies. */
-export type GameMode = 'campaign' | 'endless';
+/**
+ * Campaign runs end at a scripted boss; endless runs end when the core dies;
+ * skirmish is a player-configured one-off — structured like campaign (a
+ * scripted boss wave) but outside progress tracking (see `finishLevel`).
+ */
+export type GameMode = 'campaign' | 'endless' | 'skirmish';
 
 export type BuildMode = { kind: BuildingKind } | null;
 export type CursorMode = 'normal' | 'build' | 'sell';
@@ -52,8 +61,8 @@ export interface Banner {
 
 const MAX_PROJECTILES = 900;
 const MAX_PICKUPS = 500;
-const PLAYER_BASE_HP = 160;
-const CORE_BASE_HP = 2600;
+export const PLAYER_BASE_HP = 160;
+export const CORE_BASE_HP = 2600;
 /** How far the player's weapon reaches when auto-aiming. */
 const PLAYER_AIM_RANGE = 430;
 /** How close the player must be to work a seam. */
@@ -66,6 +75,10 @@ const BOSS_SCALE_SHARE = 0.3;
  * a wave open indefinitely, which reads to the player as a soft-lock.
  */
 const STRAGGLER_GRACE = 25;
+/** Largest dome any Force Field def can hold — bounds the fieldAt() broadphase query. */
+const FIELD_QUERY_RADIUS = Math.max(
+  130, ...Object.values(BUILDINGS).filter((d) => d.fieldHp !== undefined).map((d) => d.auraRadius ?? 130),
+);
 
 /** Damage after flat armour, never fully negated. */
 function mitigate(amount: number, armor: number, pierce: number): number {
@@ -79,12 +92,15 @@ export class Game {
 
   // --- level scoped ---
   level!: LevelDef;
+  /** -1 for a skirmish run: it isn't an entry in LEVELS, so nothing keyed on it applies. */
   levelIndex = 0;
   mode: GameMode = 'campaign';
+  /** NG+ tier actually applied this run (1 = base game). Campaign starts only — see startLevel. */
+  ngTier = 1;
   /** Seed the current map was rolled from; shown in the UI and reusable. */
   runSeed = 0;
   /** runSeed mixed with the sector salt — what the world and director derive from. */
-  private mapSeed = 0;
+  mapSeed = 0;
   world!: World;
   core!: Core;
   player!: Player;
@@ -104,6 +120,10 @@ export class Game {
 
   private enemyHash!: SpatialHash;
   private queryBuf: number[] = [];
+  private buildingHash!: SpatialHash;
+  private buildingQueryBuf: number[] = [];
+  /** id → building, for O(1) lookups (drone bays) instead of scanning `buildings`. */
+  private buildingById = new Map<number, Building>();
 
   // --- economy ---
   ore = 0;
@@ -115,8 +135,8 @@ export class Game {
   waveIndex = 0;
   plan: WavePlan | null = null;
   nextPlan: WavePlan | null = null;
-  private director!: WaveDirector;
-  private orderCursor = 0;
+  director!: WaveDirector;
+  orderCursor = 0;
   waveTimer = 0;         // counts down in prep, up in combat
   prepRemaining = 0;
   spawnedThisWave = 0;
@@ -162,6 +182,11 @@ export class Game {
   /** The enemy auto-aim is currently tracking, for the HUD lock indicator. */
   autoTarget: Enemy | null = null;
   cursorMode: CursorMode = 'normal';
+  /**
+   * Which build-bar section the digit keys address. UI state, but it lives here
+   * so the keyboard handler and the renderer read one value rather than two.
+   */
+  buildCategory: BuildCategory = 'resources';
   buildKind: BuildingKind | null = null;
   buildValid = false;
   buildTx = 0;
@@ -189,20 +214,41 @@ export class Game {
   /* ====================================================================== */
 
   /**
+   * @param levelIndex  Either a campaign sector index, or a fully-formed
+   *                     `LevelDef` (a skirmish map built by `makeSkirmishLevel`)
+   *                     to play as a one-off outside the fixed `LEVELS` array.
    * @param seed  Explicit map seed. Omit for a fresh random map — this is what
    *              makes a replayed sector a different fight rather than the same
    *              one from memory. Pass a value to reproduce a run or to pin a map
    *              in tests.
    */
   startLevel(
-    levelIndex: number,
-    carryOver?: { perks: Perks; tech: string[]; unlocked: BuildingKind[] },
+    levelIndex: number | LevelDef,
+    carryOver?: {
+      perks: Perks; tech: string[]; unlocked: BuildingKind[];
+      weaponsOwned: WeaponKind[]; weapon: WeaponKind; armorTier: number;
+    },
     seed?: number,
     opts: { mode?: GameMode; resuming?: boolean } = {},
   ) {
-    this.levelIndex = clamp(levelIndex, 0, LEVELS.length - 1);
-    this.level = LEVELS[this.levelIndex];
     this.mode = opts.mode ?? 'campaign';
+    if (typeof levelIndex === 'number') {
+      this.levelIndex = clamp(levelIndex, 0, LEVELS.length - 1);
+      const base = LEVELS[this.levelIndex];
+      // NG+ only ever applies to a real campaign sector picked by index —
+      // a skirmish map already bakes the chosen difficulty into its own
+      // LevelDef, and endless has its own separate scaling.
+      this.ngTier = this.mode === 'campaign'
+        ? clamp(Math.round(this.progress.data.settings.ngTier ?? 1), 1, 10)
+        : 1;
+      this.level = this.ngTier > 1
+        ? { ...base, difficulty: base.difficulty * ngDifficultyMult(this.ngTier) }
+        : base;
+    } else {
+      this.levelIndex = -1;
+      this.level = levelIndex;
+      this.ngTier = 1;
+    }
     // The level's own seed is a per-sector salt, so the same run seed still yields
     // a different map in each sector.
     this.runSeed = (seed ?? ((Math.random() * 0x100000000) >>> 0)) >>> 0;
@@ -211,6 +257,7 @@ export class Game {
     this.rng = new Rng(mapSeed ^ 0xc0ffee);
     this.world = new World(this.level, mapSeed);
     this.enemyHash = new SpatialHash(this.world.pxW, this.world.pxH, 72);
+    this.buildingHash = new SpatialHash(this.world.pxW, this.world.pxH, 128);
 
     // Perks: achievements always apply; tech carries across levels in a campaign.
     this.perks = this.progress.computePerks();
@@ -228,6 +275,7 @@ export class Game {
 
     this.enemies.length = 0;
     this.buildings.length = 0;
+    this.buildingById.clear();
     this.buildingAt = new Array(this.world.w * this.world.h).fill(null);
     this.projectiles.length = 0;
     this.drones.length = 0;
@@ -237,11 +285,18 @@ export class Game {
     this.particles.clear();
 
     this.core = new Core(this.world.coreX, this.world.coreY, Math.round(CORE_BASE_HP * this.perks.coreHp));
+    const armorTier = carryOver?.armorTier ?? 0;
+    const armorHpBonus = ARMOR_TIERS[armorTier]?.hpBonus ?? 0;
     this.player = new Player(
       this.world.coreX + TILE * 2.5,
       this.world.coreY + TILE * 2.5,
-      Math.round(PLAYER_BASE_HP * this.perks.playerMaxHp),
+      Math.round(PLAYER_BASE_HP * this.perks.playerMaxHp) + armorHpBonus,
     );
+    this.player.armorTier = armorTier;
+    if (carryOver) {
+      this.player.weaponsOwned = new Set(carryOver.weaponsOwned);
+      this.player.weapon = carryOver.weapon;
+    }
 
     this.ore = Math.round(this.level.startOre + this.perks.startOre);
     this.essence = Math.round(this.level.startEssence + this.perks.startEssence);
@@ -274,6 +329,8 @@ export class Game {
     this.camera.zoom = 1;
     this.cursorMode = 'normal';
     this.buildKind = null;
+    // A section that is empty in this sector must not stay selected.
+    this.buildCategory = this.activeCategories[0] ?? 'resources';
     this.elapsed = 0;
     this.frozen = false;
 
@@ -339,6 +396,7 @@ export class Game {
     this.runStats.timeSeconds += dt;
 
     this.rebuildEnemyHash();
+    this.rebuildBuildingHash();
     this.updatePower();
     this.updateWaves(dt);
     this.updatePlayer(dt, input);
@@ -411,20 +469,28 @@ export class Game {
       this.camera.zoom = clamp(this.camera.zoom * (input.wheel > 0 ? 0.9 : 1.111), 0.55, 1.9);
     }
 
-    // Build hotkeys.
-    for (const kind of BUILD_ORDER) {
+    // Section keys first: they change what the digits mean.
+    for (const cat of BUILD_CATEGORIES) {
+      if (!input.pressed(CATEGORY_KEY_CODE[cat])) continue;
+      if (this.categoryBuildings(cat).length === 0) break;
+      this.buildCategory = cat;
+      // Switching sections cancels a pending placement rather than silently
+      // leaving a ghost from the section you just left.
+      this.buildKind = null;
+      this.cursorMode = 'normal';
+      audio.play('uiClick');
+      break;
+    }
+
+    // Digits select a slot inside the active section.
+    for (const kind of this.categoryBuildings(this.buildCategory)) {
       const def = BUILDINGS[kind];
       const code = HOTKEY_CODES[def.hotkey];
-      if (code && input.pressed(code)) {
-        if (!this.unlockedBuildings.has(kind)) {
-          this.error(tr('game.error.notResearched', '{name} is not researched', { name: buildingName(def) }));
-          break;
-        }
-        this.buildKind = this.buildKind === kind ? null : kind;
-        this.cursorMode = this.buildKind ? 'build' : 'normal';
-        audio.play('uiClick');
-        break;
-      }
+      if (!code || !input.pressed(code)) continue;
+      this.buildKind = this.buildKind === kind ? null : kind;
+      this.cursorMode = this.buildKind ? 'build' : 'normal';
+      audio.play('uiClick');
+      break;
     }
 
     if (input.pressed('KeyQ')) {
@@ -535,8 +601,12 @@ export class Game {
     return this.buildingAt[this.world.idx(tx, ty)];
   }
 
-  /** Returns null when placement is legal, otherwise a player-facing reason. */
-  canPlace(def: BuildingDef, tx: number, ty: number): string | null {
+  /**
+   * Returns null when placement is legal, otherwise a player-facing reason.
+   * `checkPlayer` is turned off when replaying a save: the player's restored
+   * position is irrelevant to whether a structure they placed earlier is valid.
+   */
+  canPlace(def: BuildingDef, tx: number, ty: number, checkPlayer = true): string | null {
     const cost = this.costOf(def);
     if (this.ore < cost.ore) return tr('game.place.needOre', 'Need {n} ore', { n: cost.ore });
     if (this.essence < cost.essence) {
@@ -558,6 +628,11 @@ export class Game {
     const cx = (tx + def.size / 2) * TILE, cy = (ty + def.size / 2) * TILE;
     if (dist(cx, cy, this.core.x, this.core.y) < this.core.radius + def.size * TILE * 0.5 + 4) {
       return tr('game.place.tooCloseCore', 'Too close to the core');
+    }
+    // Don't let the player wall themselves in.
+    if (checkPlayer && !this.player.dead
+      && dist(cx, cy, this.player.x, this.player.y) < this.player.radius + def.size * TILE * 0.5) {
+      return tr('game.place.playerInWay', 'Character is in the way');
     }
     // Do not let players cap a spawn gate.
     for (const s of this.world.spawns) {
@@ -591,6 +666,7 @@ export class Game {
     const b = new Building(def, tx, ty, TILE, this.perks.structureHp);
     b.progress = 0;
     this.buildings.push(b);
+    this.buildingById.set(b.id, b);
 
     for (let y = ty; y < ty + def.size; y++) {
       for (let x = tx; x < tx + def.size; x++) {
@@ -665,6 +741,7 @@ export class Game {
     }
     const i = this.buildings.indexOf(b);
     if (i >= 0) this.buildings.splice(i, 1);
+    this.buildingById.delete(b.id);
 
     // Any enemy chewing on it needs a new target.
     for (const e of this.enemies) if (e.targetBuilding === b) { e.targetBuilding = null; e.retargetIn = 0; }
@@ -857,7 +934,7 @@ export class Game {
     if (this.structuresLostThisWave === 0) this.progress.bump('flawlessWave');
 
     const wasBoss = this.plan?.isBoss ?? false;
-    if (wasBoss && this.mode === 'campaign') {
+    if (wasBoss && (this.mode === 'campaign' || this.mode === 'skirmish')) {
       this.finishLevel();
       return;
     }
@@ -903,15 +980,21 @@ export class Game {
   endlessRecord: { waves: number; best: number; isRecord: boolean } | null = null;
 
   private finishLevel() {
-    this.progress.markLevelCleared(this.levelIndex);
-    this.lastRelicAward = this.progress.awardSectorClear(this.levelIndex);
+    if (this.mode === 'campaign') {
+      this.progress.markLevelCleared(this.levelIndex);
+      this.lastRelicAward = this.progress.awardSectorClear(this.levelIndex);
+      if (this.levelIndex >= LEVELS.length - 1) this.progress.bump('campaign');
+    } else {
+      // Skirmish: no sector index to key a reward off, so it scales with
+      // whatever difficulty the player configured instead.
+      this.lastRelicAward = this.progress.awardSkirmishRelics(this.level.difficulty);
+    }
     this.progress.bump('level');
     this.progress.recordRunStat('victories', 1);
     if (this.runStats.structuresLost === 0) {
       this.progress.bump('flawlessLevel');
       this.progress.recordRunStat('noLossVictories', 1);
     }
-    if (this.levelIndex >= LEVELS.length - 1) this.progress.bump('campaign');
     // The run is over; nothing left to resume.
     this.discardSavedRun();
     audio.play('victory');
@@ -973,8 +1056,10 @@ export class Game {
       default: break;
     }
 
-    // Perks that change maxima need the live values re-derived.
-    this.player.maxHp = Math.round(PLAYER_BASE_HP * this.perks.playerMaxHp);
+    // Perks that change maxima need the live values re-derived. Armor tier's
+    // flat bonus rides along on top — otherwise a tech pick here would quietly
+    // wipe out essence already spent on armor.
+    this.player.maxHp = Math.round(PLAYER_BASE_HP * this.perks.playerMaxHp) + this.armorHpBonus();
     this.player.hp = Math.min(this.player.maxHp, this.player.hp + 20);
     const newCoreMax = Math.round(CORE_BASE_HP * this.perks.coreHp);
     if (newCoreMax > this.core.maxHp) {
@@ -994,6 +1079,48 @@ export class Game {
     this.frozen = false;
     audio.play('levelUp');
     this.setBanner(techName(card).toUpperCase(), techDesc(card), 3, '#b47cff');
+  }
+
+  private armorHpBonus() {
+    return ARMOR_TIERS[this.player.armorTier]?.hpBonus ?? 0;
+  }
+
+  /* ====================================================================== */
+  /* Loadout — essence-bought player weapons and armor, see data/loadout.ts   */
+  /* ====================================================================== */
+
+  /**
+   * Unlocks (or, if already owned, just re-equips for free) a weapon. This is
+   * a deliberate essence sink the player opts into, distinct from tech cards
+   * (random, free, numeric-only) and the relic Armoury (permanent, cross-run,
+   * bought with relics) — see the module doc in data/loadout.ts.
+   */
+  buyWeapon(kind: WeaponKind): boolean {
+    if (this.player.weaponsOwned.has(kind)) {
+      this.player.weapon = kind;
+      return true;
+    }
+    const def = WEAPONS[kind];
+    if (!def || this.essence < def.cost) return false;
+    this.essence -= def.cost;
+    this.player.weaponsOwned.add(kind);
+    this.player.weapon = kind;
+    audio.play('levelUp');
+    return true;
+  }
+
+  /** Buys exactly the next armor tier up from the one currently worn. */
+  buyArmorTier(): boolean {
+    const next = ARMOR_TIERS[this.player.armorTier + 1];
+    if (!next) return false;
+    if (this.essence < next.cost) return false;
+    this.essence -= next.cost;
+    const delta = next.hpBonus - this.armorHpBonus();
+    this.player.armorTier = next.tier;
+    this.player.maxHp += delta;
+    this.player.hp += delta;
+    audio.play('levelUp');
+    return true;
   }
 
   private spawnFromGate(enemyId: string, gate: number, plan: WavePlan, elite: boolean) {
@@ -1144,6 +1271,12 @@ export class Game {
       this.particles.spawn(p.x, p.y + 8, rand(-14, 14), rand(-6, 10), rand(0.25, 0.6),
         rand(2, 5), this.level.palette.ground1, PKind.Smoke, { additive: false, drag: 3 });
     }
+    // Maxed-out power tier throws off ambient sparks — the loudest of the
+    // chassis's escalating tells, see Renderer.drawPlayer for the rest.
+    if (this.powerTier >= 4 && chance(dt * 4)) {
+      this.particles.spawn(p.x + rand(-10, 10), p.y + rand(-10, 10), rand(-20, 20), rand(-50, -15),
+        rand(0.3, 0.6), rand(2, 4), 0xffe066, PKind.Spark, { drag: 2 });
+    }
 
     // Firing.
     p.cooldown -= dt;
@@ -1158,9 +1291,10 @@ export class Game {
       wantFire = locked && aligned && p.heat < 0.85 && this.cursorMode !== 'build';
     }
     if (wantFire && p.cooldown <= 0 && !p.overheated) {
+      const weaponDef = WEAPONS[p.weapon];
       this.playerShoot();
-      p.cooldown = 1 / (7.4 * this.perks.playerFireRate);
-      p.heat += 0.052;
+      p.cooldown = 1 / (weaponDef.fireRate * this.perks.playerFireRate);
+      p.heat += weaponDef.heatPerShot;
       if (p.heat >= 1) { p.overheated = true; p.heat = 1; audio.play('error'); }
     }
 
@@ -1250,25 +1384,75 @@ export class Game {
     }
   }
 
+  /** Fires whatever `player.weapon` currently is — see data/loadout.ts for the roster. */
   private playerShoot() {
     const p = this.player;
-    const spread = 0.035;
-    const a = p.aim + rand(-spread, spread);
     const mx = p.x + Math.cos(p.aim) * 22;
     const my = p.y + Math.sin(p.aim) * 22;
-    const dmg = 16 * this.perks.playerDamage;
+    const pierce = this.perks.armorShred;
 
-    this.fire({
-      x: mx, y: my, angle: a, speed: 980, damage: dmg, kind: 'bullet',
-      faction: 'player', color: 0xfff0a0, size: 3.4, life: 0.7,
-      armorPierce: 2 + this.perks.armorShred, ownerId: 0, splash: 0,
-    });
+    switch (p.weapon) {
+      case 'dualmg': {
+        // Twin barrels either side of the aim line, each its own stream —
+        // more total lead downrange, looser accuracy than the rifle.
+        const dmg = 9 * this.perks.playerDamage;
+        for (const side of [-1, 1]) {
+          const ox = -Math.sin(p.aim) * side * 6, oy = Math.cos(p.aim) * side * 6;
+          const a = p.aim + rand(-0.09, 0.09);
+          this.fire({
+            x: mx + ox, y: my + oy, angle: a, speed: 980, damage: dmg, kind: 'bullet',
+            faction: 'player', color: 0xfff0a0, size: 3, life: 0.7,
+            armorPierce: 1 + pierce, ownerId: 0, splash: 0,
+          });
+        }
+        this.particles.muzzle(mx, my, p.aim, 0xffd98a, 1);
+        audio.play('shoot', rand(1.1, 1.25));
+        break;
+      }
+      case 'shotgun': {
+        const pellets = 5;
+        const dmg = 7 * this.perks.playerDamage;
+        for (let i = 0; i < pellets; i++) {
+          const a = p.aim + rand(-0.22, 0.22);
+          this.fire({
+            x: mx, y: my, angle: a, speed: 900, damage: dmg, kind: 'bullet',
+            faction: 'player', color: 0xffcf7a, size: 2.6, life: 0.4,
+            armorPierce: pierce, ownerId: 0, splash: 0,
+          });
+        }
+        this.particles.muzzle(mx, my, p.aim, 0xffcf7a, 1.4);
+        audio.play('shoot', rand(0.75, 0.85));
+        break;
+      }
+      case 'rocket': {
+        const dmg = 65 * this.perks.playerDamage;
+        this.fire({
+          x: mx, y: my, angle: p.aim, speed: 560, damage: dmg, kind: 'rocket',
+          faction: 'player', color: 0xffb066, size: 5, life: 1.6,
+          armorPierce: 6 + pierce, ownerId: 0, splash: 55,
+        });
+        this.particles.muzzle(mx, my, p.aim, 0xffb066, 1.6);
+        audio.play('shootHeavy', rand(0.9, 1));
+        this.shake(2);
+        break;
+      }
+      default: {
+        const spread = 0.035;
+        const a = p.aim + rand(-spread, spread);
+        const dmg = 16 * this.perks.playerDamage;
+        this.fire({
+          x: mx, y: my, angle: a, speed: 980, damage: dmg, kind: 'bullet',
+          faction: 'player', color: 0xfff0a0, size: 3.4, life: 0.7,
+          armorPierce: 2 + pierce, ownerId: 0, splash: 0,
+        });
+        this.particles.muzzle(mx, my, p.aim, 0xffd98a, 1);
+        audio.play('shoot', rand(0.94, 1.08));
+      }
+    }
 
     // Recoil is expressed on the weapon sprite and the crosshair only — the
     // camera is deliberately left alone so sustained fire never shakes the view.
     p.recoil = 1;
-    this.particles.muzzle(mx, my, p.aim, 0xffd98a, 1);
-    audio.play('shoot', rand(0.94, 1.08));
   }
 
   /* ====================================================================== */
@@ -1294,6 +1478,12 @@ export class Game {
             for (let k = 0; k < Math.round(b.def.droneSlots); k++) this.spawnDrone(b);
             b.droneCooldown = 0;
           }
+          // Force Field: starts charging the moment construction finishes —
+          // the short first charge, see popForceField for the longer repeats.
+          if (b.def.fieldHp !== undefined) {
+            b.fieldChargeTimer = b.def.chargeTime ?? 6;
+            b.fieldChargeTotal = b.fieldChargeTimer;
+          }
         }
         continue;
       }
@@ -1306,6 +1496,7 @@ export class Game {
       if (b.def.extractRate !== undefined) this.updateExtractor(b, dt);
       if (b.def.repairRate !== undefined) this.updateRepairBay(b, dt);
       if (b.def.shieldAmount !== undefined) this.updateShieldPylon(b, dt);
+      if (b.def.fieldHp !== undefined) this.updateForceField(b, dt);
       if (b.isTurret) this.updateTurret(b, dt);
     }
   }
@@ -1377,8 +1568,7 @@ export class Game {
   }
 
   private bayOf(d: Drone): Building | null {
-    for (const b of this.buildings) if (b.id === d.bayId) return b;
-    return null;
+    return this.buildingById.get(d.bayId) ?? null;
   }
 
   /**
@@ -1567,10 +1757,13 @@ export class Game {
 
   private updateRepairBay(b: Building, dt: number) {
     const rate = b.def.repairRate! * this.perks.repairRate * b.efficiency * dt;
-    const r2 = b.def.auraRadius! * b.def.auraRadius!;
+    const radius = b.def.auraRadius!;
+    const r2 = radius * radius;
     let healed = 0;
-    for (const t of this.buildings) {
-      if (t.hp >= t.maxHp || !t.built) continue;
+    const list = this.buildingHash.query(b.x, b.y, radius, this.buildingQueryBuf);
+    for (let k = 0; k < list.length; k++) {
+      const t = this.buildings[list[k]];
+      if (!t || t.hp >= t.maxHp || !t.built) continue;
       if (dist2(b.x, b.y, t.x, t.y) > r2) continue;
       const heal = Math.min(t.maxHp - t.hp, rate);
       t.hp += heal;
@@ -1590,9 +1783,12 @@ export class Game {
 
   private updateShieldPylon(b: Building, dt: number) {
     const amount = b.def.shieldAmount! * b.efficiency;
-    const r2 = b.def.auraRadius! * b.def.auraRadius!;
-    for (const t of this.buildings) {
-      if (!t.built) continue;
+    const radius = b.def.auraRadius!;
+    const r2 = radius * radius;
+    const list = this.buildingHash.query(b.x, b.y, radius, this.buildingQueryBuf);
+    for (let k = 0; k < list.length; k++) {
+      const t = this.buildings[list[k]];
+      if (!t || !t.built) continue;
       if (dist2(b.x, b.y, t.x, t.y) > r2) continue;
       if (t.maxShield < amount) t.maxShield = amount;
       t.shield = Math.min(t.maxShield, t.shield + amount * 0.25 * dt);
@@ -1602,6 +1798,75 @@ export class Game {
       if (this.core.maxShield < coreShield) this.core.maxShield = coreShield;
       this.core.shield = Math.min(this.core.maxShield, this.core.shield + coreShield * 0.2 * dt);
     }
+  }
+
+  /**
+   * Force Field: charges on power, then holds a flat hp pool that only
+   * ranged fire can spend (see absorbIntoField / fieldAt, and the call sites
+   * in projectileVsPlayerSide and damageAlongLine). Unlike the Aegis Pylon's
+   * shield, this does not regenerate while up — it holds until popped, then
+   * has to charge back from zero, slower than the first time.
+   */
+  private updateForceField(b: Building, dt: number) {
+    const maxHp = b.def.fieldHp! * this.perks.structureHp;
+    if (b.fieldChargeTimer > 0) {
+      // Underpowered slows the charge instead of stopping it outright — a
+      // half-lit grid still gets there, just not on schedule.
+      b.fieldChargeTimer = Math.max(0, b.fieldChargeTimer - dt * Math.max(0.1, b.efficiency));
+      if (b.fieldChargeTimer <= 0) {
+        b.fieldHp = maxHp;
+        b.fieldMaxHp = maxHp;
+        this.particles.ring(b.x, b.y, b.def.auraRadius ?? 130, 0x9fd8ff, 0.5);
+        audio.play('levelUp');
+      }
+      return;
+    }
+    if (b.fieldHp <= 0) return;
+    b.fieldMaxHp = maxHp;
+    // Active but underpowered: the dome itself bleeds down instead of just
+    // sitting there for free — upkeep is a real cost, not a one-time toggle.
+    if (b.efficiency < 1) {
+      b.fieldHp = Math.max(0, b.fieldHp - (1 - b.efficiency) * maxHp * 0.15 * dt);
+      if (b.fieldHp <= 0) this.popForceField(b);
+    }
+  }
+
+  /** The dome has taken (or bled) enough damage to collapse — starts the (longer) recharge. */
+  private popForceField(b: Building) {
+    b.fieldHp = 0;
+    b.fieldChargeTimer = b.def.rechargeTime ?? 16;
+    b.fieldChargeTotal = b.fieldChargeTimer;
+    this.particles.explosion(b.x, b.y, (b.def.auraRadius ?? 130) * 0.35, 0x9fd8ff, this.level.palette.rock);
+    audio.play('explode');
+  }
+
+  /** The active Force Field (if any) whose dome covers this point. */
+  private fieldAt(x: number, y: number): Building | null {
+    const list = this.buildingHash.query(x, y, FIELD_QUERY_RADIUS, this.buildingQueryBuf);
+    for (let k = 0; k < list.length; k++) {
+      const b = this.buildings[list[k]];
+      if (!b || !b.built || b.def.fieldHp === undefined || b.fieldHp <= 0) continue;
+      const r = b.def.auraRadius ?? 130;
+      if (dist2(x, y, b.x, b.y) <= r * r) return b;
+    }
+    return null;
+  }
+
+  /**
+   * Routes ranged damage aimed at (x, y) into a covering Force Field's own
+   * hp instead of the actual target, if one is up. Returns whether it was
+   * absorbed — callers skip their normal damage application when true.
+   * Melee/contact damage never calls this, which is what makes the field
+   * "ranged-only": see projectileVsPlayerSide and damageAlongLine, its only
+   * two callers.
+   */
+  private absorbIntoField(x: number, y: number, amount: number): boolean {
+    const field = this.fieldAt(x, y);
+    if (!field) return false;
+    field.fieldHp = Math.max(0, field.fieldHp - amount);
+    this.particles.impact(x, y, 0, 0x9fd8ff, 0.8);
+    if (field.fieldHp <= 0) this.popForceField(field);
+    return true;
   }
 
   private updateTurret(b: Building, dt: number) {
@@ -1863,6 +2128,14 @@ export class Game {
     }
   }
 
+  private rebuildBuildingHash() {
+    this.buildingHash.clear();
+    for (let i = 0; i < this.buildings.length; i++) {
+      const b = this.buildings[i];
+      this.buildingHash.insert(i, b.x, b.y);
+    }
+  }
+
   private flowOut = { x: 0, y: 0 };
 
   private updateEnemies(dt: number) {
@@ -1890,7 +2163,10 @@ export class Game {
         }
       }
 
-      if (e.boss) this.updateBossAbilities(e, dt);
+      // Not boss-exclusive despite the name: any def with an `abilities` array
+      // gets the same telegraph/cast/resolve loop — e.g. the Broodmother's
+      // `spawn` uses this to reinforce the wave without being a wave boss.
+      if (e.def.abilities) this.updateBossAbilities(e, dt);
 
       // Burrowers periodically submerge and phase through everything.
       if (e.def.behavior === 'burrower') {
@@ -2021,6 +2297,22 @@ export class Game {
     const out = this.flowOut;
     const beh = e.def.behavior;
 
+    // A ranged flier (e.g. the Void Wasp) still holds its stand-off range
+    // instead of beelining into contact range like a melee flier — same hold
+    // logic as a grounded ranged unit, just untethered from the flow field.
+    if (e.flying && beh === 'ranged' && !e.berserk) {
+      const target = this.pickRangedTarget(e);
+      if (target) {
+        const d = dist(e.x, e.y, target.x, target.y);
+        const want = e.def.attackRange * 0.78;
+        const dir = (d - want) / (Math.abs(d - want) || 1);
+        if (Math.abs(d - want) < 18) return { x: 0, y: 0 };
+        const l = d || 1;
+        return { x: ((target.x - e.x) / l) * dir, y: ((target.y - e.y) / l) * dir };
+      }
+      // No target in sight yet: fall through to the beeline below so it closes in.
+    }
+
     // Fliers and submerged burrowers ignore the field entirely.
     if (e.flying || e.submerged) {
       const tx = this.core.x, ty = this.core.y;
@@ -2104,7 +2396,10 @@ export class Game {
     let best: { x: number; y: number; radius: number } | null = null;
     let bestD = range * range;
 
-    for (const b of this.buildings) {
+    const list = this.buildingHash.query(e.x, e.y, range, this.buildingQueryBuf);
+    for (let k = 0; k < list.length; k++) {
+      const b = this.buildings[list[k]];
+      if (!b) continue;
       const d2 = dist2(e.x, e.y, b.x, b.y);
       if (d2 < bestD && this.world.lineOfSight(e.x, e.y, b.x, b.y)) { bestD = d2; best = b; }
     }
@@ -2122,7 +2417,10 @@ export class Game {
   private nearestBuilding(x: number, y: number, maxR: number): Building | null {
     let best: Building | null = null;
     let bestD = maxR * maxR;
-    for (const b of this.buildings) {
+    const list = this.buildingHash.query(x, y, maxR, this.buildingQueryBuf);
+    for (let k = 0; k < list.length; k++) {
+      const b = this.buildings[list[k]];
+      if (!b) continue;
       const d2 = dist2(x, y, b.x, b.y);
       if (d2 < bestD) { bestD = d2; best = b; }
     }
@@ -2351,10 +2649,13 @@ export class Game {
 
     for (let i = this.buildings.length - 1; i >= 0; i--) {
       const b = this.buildings[i];
-      if (hitBody(b)) this.damageBuilding(b, damage);
+      if (hitBody(b) && !this.absorbIntoField(b.x, b.y, damage)) this.damageBuilding(b, damage);
     }
-    if (hitBody(this.core)) this.damageCore(damage);
-    if (!this.player.dead && hitBody(this.player)) this.damagePlayer(damage * 0.5);
+    if (hitBody(this.core) && !this.absorbIntoField(this.core.x, this.core.y, damage)) this.damageCore(damage);
+    if (!this.player.dead && hitBody(this.player) &&
+        !this.absorbIntoField(this.player.x, this.player.y, damage * 0.5)) {
+      this.damagePlayer(damage * 0.5);
+    }
   }
 
   /* ====================================================================== */
@@ -2571,6 +2872,7 @@ export class Game {
     const tx = Math.floor(p.x / TILE), ty = Math.floor(p.y / TILE);
     const b = this.buildingAtTile(tx, ty);
     if (b) {
+      if (this.absorbIntoField(p.x, p.y, p.damage)) { p.dead = true; return; }
       if (p.splash > 0) { this.detonate(p); p.dead = true; return; }
       this.damageBuilding(b, p.damage);
       this.particles.impact(p.x, p.y, Math.atan2(p.vy, p.vx), p.color, 1);
@@ -2579,6 +2881,7 @@ export class Game {
     }
     const rc = this.core.radius + p.radius;
     if (dist2(p.x, p.y, this.core.x, this.core.y) < rc * rc) {
+      if (this.absorbIntoField(p.x, p.y, p.damage)) { p.dead = true; return; }
       if (p.splash > 0) { this.detonate(p); p.dead = true; return; }
       this.damageCore(p.damage);
       p.dead = true;
@@ -2587,6 +2890,7 @@ export class Game {
     if (!this.player.dead) {
       const rp = this.player.radius + p.radius;
       if (dist2(p.x, p.y, this.player.x, this.player.y) < rp * rp) {
+        if (this.absorbIntoField(p.x, p.y, p.damage)) { p.dead = true; return; }
         if (p.splash > 0) { this.detonate(p); p.dead = true; return; }
         this.damagePlayer(p.damage);
         p.dead = true;
@@ -3148,6 +3452,24 @@ export class Game {
 
   get endless() { return this.mode === 'endless'; }
 
+  /**
+   * Whether a run snapshot is worth writing at all. Skirmish is excluded: it
+   * isn't a `LEVELS` index (see `levelIndex`), so `resume()` would reject the
+   * snapshot anyway — bailing out here just avoids clobbering a genuine
+   * campaign/endless snapshot the player might still have with a useless one.
+   */
+  get canSaveRun() { return this.inBuildPhase && this.mode !== 'skirmish'; }
+
+  /**
+   * How stacked this run's tech is, 0-4 — the single source of truth the
+   * renderer reads to escalate the player chassis's energy glow, and that
+   * updatePlayer reads below to decide whether it should be throwing off
+   * ambient sparks at the top tier. Deliberately separate from armor tier:
+   * this is about power picked up in the field (tech cards), not gear bought
+   * with essence.
+   */
+  get powerTier() { return Math.min(4, Math.floor(this.techTaken.length / 2)); }
+
   get waveLabel() {
     if (this.endless) {
       if (this.plan?.isBoss || this.phase === 'boss') {
@@ -3188,6 +3510,32 @@ export class Game {
     return { live, slots: Math.round(bay.def.droneSlots ?? 0) };
   }
 
+  /** Unlocked structures in one section, in slot order. */
+  categoryBuildings(category: BuildCategory): BuildingKind[] {
+    return buildingsInCategory(category, this.unlockedBuildings);
+  }
+
+  /** Sections that currently have anything in them — empty tabs are hidden. */
+  get activeCategories(): BuildCategory[] {
+    return BUILD_CATEGORIES.filter((c) => this.categoryBuildings(c).length > 0);
+  }
+
+  /**
+   * Points the bar at a structure, switching section if needed. Used by the
+   * renderer's click routing and whenever a tech unlock should be discoverable.
+   */
+  selectBuilding(kind: BuildingKind | null) {
+    if (kind === null) {
+      this.buildKind = null;
+      this.cursorMode = 'normal';
+      return;
+    }
+    if (!this.unlockedBuildings.has(kind)) return;
+    this.buildCategory = BUILDINGS[kind].category;
+    this.buildKind = kind;
+    this.cursorMode = 'build';
+  }
+
   get availableBuildings(): BuildingKind[] {
     return BUILD_ORDER.filter((k) => this.unlockedBuildings.has(k));
   }
@@ -3219,50 +3567,16 @@ export class Game {
   /**
    * Snapshots the run. Only valid during a build phase — the caller guarantees
    * that, which is precisely why no enemy, projectile or particle state is here.
+   * See runSnapshot.ts for the implementation — it needs none of this class's
+   * private state, so it lives outside the class entirely.
    */
   snapshot(): RunSnapshot {
-    return {
-      v: RUN_SNAPSHOT_VERSION,
-      mode: this.mode,
-      levelIndex: this.levelIndex,
-      seed: this.runSeed,
-      waveIndex: this.waveIndex,
-      prepRemaining: this.prepRemaining,
-      ore: Math.round(this.ore),
-      essence: Math.round(this.essence),
-      coreHp: this.core.hp,
-      coreShield: this.core.shield,
-      playerHp: this.player.hp,
-      playerX: this.player.x,
-      playerY: this.player.y,
-      tech: [...this.techTaken],
-      unlocked: [...this.unlockedBuildings],
-      buildings: this.buildings.map((b) => ({
-        k: b.kind, tx: b.tx, ty: b.ty, hp: Math.round(b.hp),
-      })),
-      nodes: this.world.nodes.map((n) => Math.round(n.amount)),
-      stats: {
-        kills: this.runStats.kills,
-        bossKills: this.runStats.bossKills,
-        oreMined: Math.round(this.runStats.oreMined),
-        essenceCollected: Math.round(this.runStats.essenceCollected),
-        built: this.runStats.built,
-        damage: Math.round(this.runStats.damage),
-        structuresLost: this.runStats.structuresLost,
-        wavesCleared: this.runStats.wavesCleared,
-        coreDamage: Math.round(this.runStats.coreDamage),
-        timeSeconds: Math.round(this.runStats.timeSeconds),
-        bestPower: this.runStats.bestPower,
-        dronesLost: this.runStats.dronesLost,
-        droneOre: Math.round(this.runStats.droneOre),
-      },
-      savedAt: Date.now(),
-    };
+    return buildSnapshot(this);
   }
 
   /** Writes a snapshot if the run is in a resumable state. Safe to spam. */
   autoSaveRun() {
-    if (!this.inBuildPhase || this.phase === 'won' || this.phase === 'lost') return false;
+    if (!this.canSaveRun || this.phase === 'won' || this.phase === 'lost') return false;
     saveRun(this.snapshot());
     return true;
   }
@@ -3274,99 +3588,23 @@ export class Game {
 
   /**
    * Rebuilds a run from a snapshot. Returns false if the snapshot is unusable,
-   * leaving the game untouched.
+   * leaving the game untouched. See runSnapshot.ts for the implementation.
    */
   resume(snap: RunSnapshot): boolean {
-    if (!snap || snap.v !== RUN_SNAPSHOT_VERSION) return false;
-    if (snap.levelIndex < 0 || snap.levelIndex >= LEVELS.length) return false;
-
-    // Regenerate the exact same world from the seed, then lay the player's
-    // changes back over the top.
-    this.startLevel(snap.levelIndex, undefined, snap.seed, {
-      mode: snap.mode,
-      resuming: true,
-    });
-
-    this.techTaken = [...snap.tech];
-    this.unlockedBuildings = new Set(snap.unlocked as BuildingKind[]);
-    // Perks are derived, never stored: the profile may have gained achievements
-    // or shop ranks since the save, and the run should benefit from them.
-    this.perks = this.progress.computePerks();
-    for (const id of this.techTaken) {
-      const card = TECH_CARDS.find((c) => c.id === id);
-      if (card?.perk) applyPerk(this.perks, card.perk);
-    }
-
-    this.core.maxHp = Math.round(CORE_BASE_HP * this.perks.coreHp);
-    this.core.hp = clamp(snap.coreHp, 1, this.core.maxHp);
-    this.core.shield = Math.max(0, snap.coreShield);
-    this.player.maxHp = Math.round(PLAYER_BASE_HP * this.perks.playerMaxHp);
-    this.player.hp = clamp(snap.playerHp, 1, this.player.maxHp);
-    this.player.x = clamp(snap.playerX, TILE, this.world.pxW - TILE);
-    this.player.y = clamp(snap.playerY, TILE, this.world.pxH - TILE);
-
-    this.ore = Math.max(0, snap.ore);
-    this.essence = Math.max(0, snap.essence);
-
-    // Restore drained seams before structures, so an extractor can re-bind.
-    for (let i = 0; i < this.world.nodes.length && i < snap.nodes.length; i++) {
-      const n = this.world.nodes[i];
-      const amount = clamp(snap.nodes[i], 0, n.max);
-      if (amount >= n.max) continue;
-      this.world.drain(n, n.amount - amount);
-    }
-
-    for (const b of snap.buildings) {
-      const def = BUILDINGS[b.k as BuildingKind];
-      if (!def) continue;
-      this.restoreBuilding(def, b.tx, b.ty, b.hp);
-    }
-
-    this.runStats = { ...this.runStats, ...snap.stats };
-
-    this.waveIndex = snap.waveIndex;
-    // Rebuild the director from scratch before walking it forward. startLevel has
-    // already consumed a plan(0) off the one it created, and the director's RNG
-    // advances per call — reusing it would put the resumed run one roll out of
-    // step with the wave the player was actually promised.
-    this.director = new WaveDirector(
-      this.level, this.world.spawns.length, this.mapSeed ^ 0xabcdef, this.endless,
-    );
-    this.director.fastForwardTo(this.waveIndex);
-    this.nextPlan = this.director.plan(this.waveIndex);
-    this.plan = null;
-    this.orderCursor = 0;
-    this.prepRemaining = Math.max(3, snap.prepRemaining);
-    this.phase = this.waveIndex === 0 ? 'prep' : 'cleared';
-    this.world.field.dirty = true;
-    this.world.field.rebuild();
-
-    // Drones are not serialised — they are transient and always mid-flight. Refill
-    // the bays outright rather than making the player wait out respawn timers for
-    // something that was only lost to saving.
-    this.fillDroneBays();
-
-    this.setBanner(
-      tr('game.banner.runResumed', 'RUN RESUMED'),
-      this.endless
-        ? tr('game.banner.runResumedDetailEndless', '{level} - wave {wave} - endless',
-          { level: levelName(this.level), wave: this.waveIndex + 1 })
-        : tr('game.banner.runResumedDetail', '{level} - wave {wave}',
-          { level: levelName(this.level), wave: this.waveIndex + 1 }),
-      3.2, '#5cf2a0');
-    return true;
+    return applySnapshot(this, snap);
   }
 
   /** Places a saved structure without charging for it or playing build FX. */
-  private restoreBuilding(def: BuildingDef, tx: number, ty: number, hp: number) {
+  restoreBuilding(def: BuildingDef, tx: number, ty: number, hp: number) {
     // Terrain regenerates identically, so a rejection means the snapshot and the
     // code have diverged; skip that structure rather than corrupt the grid.
-    if (this.canPlace(def, tx, ty) !== null) return;
+    if (this.canPlace(def, tx, ty, false) !== null) return;
 
     const b = new Building(def, tx, ty, TILE, this.perks.structureHp);
     b.progress = 1;
     b.hp = clamp(hp, 1, b.maxHp);
     this.buildings.push(b);
+    this.buildingById.set(b.id, b);
     for (let y = ty; y < ty + def.size; y++) {
       for (let x = tx; x < tx + def.size; x++) {
         this.buildingAt[this.world.idx(x, y)] = b;
@@ -3392,6 +3630,9 @@ export class Game {
       perks: this.perks,
       tech: [...this.techTaken],
       unlocked: [...this.unlockedBuildings],
+      weaponsOwned: [...this.player.weaponsOwned],
+      weapon: this.player.weapon,
+      armorTier: this.player.armorTier,
     };
   }
 

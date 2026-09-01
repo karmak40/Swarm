@@ -46,6 +46,25 @@ export class Input implements InputSource {
 
   private el: HTMLElement;
 
+  /**
+   * Gamepad support merges straight into the same keyboard/mouse state a
+   * real keydown or pointerdown would produce, so every consumer (movement,
+   * fire, mine, dash) works unmodified — see `pollGamepad`. There's no manual
+   * aim stick: `Game.autoAim` (already used by touch) takes over instead, see
+   * `gamepadActive` and its use in main.ts.
+   */
+  private static readonly GAMEPAD_DEADZONE = 0.22;
+  /** True once any button/stick has actually moved — distinguishes "connected" from "in use". */
+  gamepadActive = false;
+  private gpAxisX = 0;
+  private gpAxisY = 0;
+  private gpFireHeld = false;
+  private gpMineHeld = false;
+  private gpDashHeld = false;
+  private gpStartHeld = false;
+  /** Edge-triggered like `pressed()`; Start has no keyboard equivalent to piggyback on. */
+  gamepadStartPressed = false;
+
   constructor(el: HTMLElement) {
     this.el = el;
     addEventListener('keydown', this.onKeyDown, { passive: false });
@@ -63,6 +82,7 @@ export class Input implements InputSource {
     if (e.key === 'F5' || e.key === 'F11' || e.key === 'F12') return;
     if (e.ctrlKey || e.metaKey) return;
     e.preventDefault();
+    this.gamepadActive = false;
     if (e.repeat) return;
     this.held.add(e.code);
     this.justDown.add(e.code);
@@ -77,12 +97,14 @@ export class Input implements InputSource {
     const r = this.el.getBoundingClientRect();
     this.mouseX = e.clientX - r.left;
     this.mouseY = e.clientY - r.top;
+    this.gamepadActive = false;
   };
 
   private onDown = (e: PointerEvent) => {
     const bit = 1 << e.button;
     this.buttons |= bit;
     this.justClicked |= bit;
+    this.gamepadActive = false;
   };
 
   private onUp = (e: PointerEvent) => {
@@ -110,8 +132,9 @@ export class Input implements InputSource {
   mouseClicked(button = 0) { return (this.justClicked & (1 << button)) !== 0; }
   mouseReleased(button = 0) { return (this.justReleased & (1 << button)) !== 0; }
 
-  /** Any of WASD / arrows, normalised to unit length. */
+  /** Any of WASD / arrows, or the gamepad's left stick — normalised to unit length. */
   axis(): { x: number; y: number } {
+    if (this.gpAxisX || this.gpAxisY) return { x: this.gpAxisX, y: this.gpAxisY };
     let x = 0, y = 0;
     if (this.down('KeyA') || this.down('ArrowLeft')) x -= 1;
     if (this.down('KeyD') || this.down('ArrowRight')) x += 1;
@@ -121,11 +144,80 @@ export class Input implements InputSource {
     return { x, y };
   }
 
+  /**
+   * Merges a connected gamepad's state into the same fields a real keyboard/
+   * mouse event would set, so every consumer downstream keeps working
+   * unmodified. Standard mapping: left stick moves, RT/A fires, LT/X mines,
+   * RB/B dashes, Start pauses. There is no bound action for manual aim —
+   * see the class doc — `Game.autoAim` covers it via `gamepadActive`.
+   * Call once per frame, before the frame's input is read.
+   */
+  pollGamepad() {
+    const pads = typeof navigator.getGamepads === 'function' ? navigator.getGamepads() : null;
+    const gp = pads ? [...pads].find((p): p is Gamepad => !!p) : undefined;
+    if (!gp) {
+      this.gpAxisX = 0; this.gpAxisY = 0;
+      this.setGamepadFire(false);
+      this.setGamepadMine(false);
+      this.setGamepadDash(false);
+      this.gpStartHeld = false;
+      return;
+    }
+
+    const held = (i: number) => {
+      const b = gp.buttons[i];
+      return !!b && (b.pressed || b.value > 0.5);
+    };
+
+    const lx = gp.axes[0] ?? 0, ly = gp.axes[1] ?? 0;
+    const mag = Math.hypot(lx, ly);
+    const active = mag > Input.GAMEPAD_DEADZONE;
+    this.gpAxisX = active ? lx : 0;
+    this.gpAxisY = active ? ly : 0;
+
+    const fire = held(7) || held(0);
+    const mine = held(6) || held(2);
+    const dash = held(5) || held(1);
+    const start = held(9);
+
+    this.setGamepadFire(fire);
+    this.setGamepadMine(mine);
+    this.setGamepadDash(dash);
+    if (start && !this.gpStartHeld) this.gamepadStartPressed = true;
+    this.gpStartHeld = start;
+
+    if (active || fire || mine || dash || start) this.gamepadActive = true;
+  }
+
+  private setGamepadFire(down: boolean) {
+    if (down === this.gpFireHeld) return;
+    this.gpFireHeld = down;
+    const bit = 1;
+    if (down) { this.buttons |= bit; this.justClicked |= bit; }
+    else { this.buttons &= ~bit; this.justReleased |= bit; }
+  }
+
+  private setGamepadMine(down: boolean) {
+    if (down === this.gpMineHeld) return;
+    this.gpMineHeld = down;
+    const bit = 1 << 2;
+    if (down) { this.buttons |= bit; this.justClicked |= bit; }
+    else { this.buttons &= ~bit; this.justReleased |= bit; }
+  }
+
+  private setGamepadDash(down: boolean) {
+    if (down === this.gpDashHeld) return;
+    this.gpDashHeld = down;
+    if (down) { this.held.add('ShiftLeft'); this.justDown.add('ShiftLeft'); }
+    else { this.held.delete('ShiftLeft'); this.justUp.add('ShiftLeft'); }
+  }
+
   endFrame() {
     this.justDown.clear();
     this.justUp.clear();
     this.justClicked = 0;
     this.justReleased = 0;
     this.wheel = 0;
+    this.gamepadStartPressed = false;
   }
 }

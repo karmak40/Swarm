@@ -212,6 +212,17 @@ export class Progress {
     return n;
   }
 
+  /**
+   * Skirmish payout. There is no sector index to scale off (see
+   * `awardSectorClear`), so it scales with the difficulty the player dialled
+   * in instead — a harder custom battle pays out more.
+   */
+  awardSkirmishRelics(difficultyMult: number): number {
+    const n = Math.round(3 + difficultyMult * 2);
+    this.awardRelics(n);
+    return n;
+  }
+
   /** Highest sector the player may deploy to: the one after their best clear. */
   get furthestUnlockedLevel() {
     return this.data.highestLevel + 1;

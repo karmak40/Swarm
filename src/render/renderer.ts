@@ -3,6 +3,8 @@ import { PKind } from '../engine/particles';
 import { Tile, TILE } from '../game/world';
 import type { Game } from '../game/game';
 import { BUILDINGS } from '../data/buildings';
+import { ARMOR_TIERS } from '../data/loadout';
+import type { Player } from '../game/entities';
 import { css, rgba, lighten, darken, mix } from './palette';
 import { QUALITY, readSafeAreaInsets, type Quality, type QualityProfile, type SafeInsets } from '../core/platform';
 import { drawBuilding, drawDrone, drawEnemy, lightning, poly, star, techRect } from './shapes';
@@ -111,16 +113,16 @@ export class Renderer {
     this.drawGates(ctx, gctx, game);
     this.drawPlacementGhost(ctx, game);
     this.drawRangeRings(ctx, game);
-    this.drawParticles(ctx, gctx, game, false);
+    this.drawParticles(ctx, gctx, game, view, false);
     this.drawBuildings(ctx, gctx, game, view);
     this.drawCore(ctx, gctx, game);
-    this.drawPickups(ctx, gctx, game);
+    this.drawPickups(ctx, gctx, game, view);
     this.drawEnemies(ctx, gctx, game, view);
     this.drawDrones(ctx, gctx, game, view);
     this.drawPlayer(ctx, gctx, game);
-    this.drawProjectiles(ctx, gctx, game);
-    this.drawEffects(ctx, gctx, game);
-    this.drawParticles(ctx, gctx, game, true);
+    this.drawProjectiles(ctx, gctx, game, view);
+    this.drawEffects(ctx, gctx, game, view);
+    this.drawParticles(ctx, gctx, game, view, true);
     this.drawDamageNumbers(ctx, game);
 
     ctx.restore();
@@ -153,6 +155,9 @@ export class Renderer {
 
   private skyGrad: CanvasGradient | null = null;
   private skyKey = '';
+  /** Nebula bands centered at local origin — repositioned per-frame via translate, never rebuilt. */
+  private nebulaGrads: CanvasGradient[] | null = null;
+  private nebulaKey = '';
 
   private drawSky(ctx: CanvasRenderingContext2D, game: Game) {
     const pal = game.level.palette;
@@ -167,6 +172,20 @@ export class Renderer {
     ctx.fillStyle = this.skyGrad!;
     ctx.fillRect(0, 0, this.width, this.height);
 
+    // The bands' own color stops never change frame-to-frame (only their
+    // on-screen position does), so build them once per palette and reposition
+    // with a translate instead of paying for a fresh gradient 3x every frame.
+    if (this.nebulaKey !== pal.accent + '') {
+      this.nebulaGrads = [0, 1, 2].map((i) => {
+        const r = 260 + i * 140;
+        const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+        g.addColorStop(0, css(pal.accent));
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        return g;
+      });
+      this.nebulaKey = pal.accent + '';
+    }
+
     // Slow parallax nebula bands, keyed off camera position.
     const cam = game.camera;
     ctx.save();
@@ -176,12 +195,12 @@ export class Renderer {
       const speed = 0.02 + i * 0.015;
       const x = (-cam.x * speed) % (this.width + 400) - 200;
       const y = (-cam.y * speed) % (this.height + 400) - 200;
-      const r = 260 + i * 140;
-      const g = ctx.createRadialGradient(x + i * 320, y + i * 190, 0, x + i * 320, y + i * 190, r);
-      g.addColorStop(0, css(pal.accent));
-      g.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, this.width, this.height);
+      const tx = x + i * 320, ty = y + i * 190;
+      ctx.save();
+      ctx.translate(tx, ty);
+      ctx.fillStyle = this.nebulaGrads![i];
+      ctx.fillRect(-tx, -ty, this.width, this.height);
+      ctx.restore();
     }
     ctx.restore();
   }
@@ -540,6 +559,31 @@ export class Renderer {
         ctx.stroke();
       }
 
+      // Force Field: a filled dome while up, or a tight progress ring around
+      // the emitter itself while charging/recharging — see Game.updateForceField.
+      if (b.def.fieldHp !== undefined) {
+        const r = b.def.auraRadius ?? 130;
+        if (b.fieldHp > 0) {
+          const pct = b.fieldHp / (b.fieldMaxHp || 1);
+          gctx.fillStyle = rgba(0x9fd8ff, 0.05 + pct * 0.05);
+          gctx.beginPath();
+          gctx.arc(b.x, b.y, r, 0, TAU);
+          gctx.fill();
+          ctx.strokeStyle = rgba(0x9fd8ff, 0.22 + pct * 0.35);
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(b.x, b.y, r, 0, TAU);
+          ctx.stroke();
+        } else if (b.fieldChargeTimer > 0 && b.fieldChargeTotal > 0) {
+          const frac = 1 - b.fieldChargeTimer / b.fieldChargeTotal;
+          ctx.strokeStyle = rgba(0x9fd8ff, 0.55);
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.arc(b.x, b.y, b.radius * 1.3, -Math.PI / 2, -Math.PI / 2 + TAU * frac);
+          ctx.stroke();
+        }
+      }
+
       if (b.muzzleFlash > 0) {
         // The bloom pass composites this twice, so a full-size blob here reads as
         // a flashbang on fast guns — scale it by the turret's authored flare.
@@ -691,6 +735,7 @@ export class Renderer {
     if (p.dead) return;
     const t = game.elapsed;
     const blink = p.invuln > 0 && Math.floor(t * 14) % 2 === 0;
+    const powerTier = game.powerTier;
 
     ctx.save();
     ctx.translate(p.x, p.y);
@@ -717,22 +762,49 @@ export class Renderer {
     }
     ctx.restore();
 
-    // Chassis.
+    // Chassis — recolors and grows slightly with armor tier, purely cosmetic
+    // (collision radius is unaffected; see data/loadout.ts's ARMOR_TIERS).
     ctx.save();
     ctx.rotate(p.facing);
-    const body = p.hitFlash > 0 ? lighten(0x33465e, p.hitFlash * 0.7) : 0x33465e;
+    const armor = ARMOR_TIERS[p.armorTier] ?? ARMOR_TIERS[0];
+    const chassisScale = 1 + p.armorTier * 0.045;
+    const body = p.hitFlash > 0 ? lighten(armor.color, p.hitFlash * 0.7) : armor.color;
     ctx.fillStyle = css(body);
-    techRect(ctx, -p.radius, -p.radius * 0.82, p.radius * 1.9, p.radius * 1.64, 5);
+    techRect(ctx, -p.radius * chassisScale, -p.radius * 0.82 * chassisScale,
+      p.radius * 1.9 * chassisScale, p.radius * 1.64 * chassisScale, 5);
     ctx.fill();
     ctx.strokeStyle = rgba(0x7fd9ff, 0.5);
     ctx.lineWidth = 1.4;
     ctx.stroke();
     // Thruster vents.
     ctx.fillStyle = rgba(0x46d8ff, 0.5 + Math.sin(t * 12) * 0.2);
-    ctx.fillRect(-p.radius - 1, -5, 3, 10);
+    ctx.fillRect(-p.radius * chassisScale - 1, -5, 3, 10);
+
+    // Energy trim + core glow scale with power tier (see above).
+    if (powerTier > 0) {
+      const pulse = 0.55 + Math.sin(t * 5) * 0.25 + powerTier * 0.05;
+      ctx.strokeStyle = rgba(0xffcc66, Math.min(1, pulse));
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.moveTo(-p.radius * 0.7, -p.radius * 0.55);
+      ctx.lineTo(p.radius * 0.15, -p.radius * 0.3);
+      ctx.moveTo(-p.radius * 0.7, p.radius * 0.55);
+      ctx.lineTo(p.radius * 0.15, p.radius * 0.3);
+      ctx.stroke();
+    }
+    if (powerTier > 1) {
+      const corePulse = 0.6 + Math.sin(t * 7) * 0.3;
+      ctx.fillStyle = rgba(0xffe066, corePulse);
+      for (const sy of [-0.5, 0.5]) {
+        ctx.beginPath();
+        ctx.arc(-p.radius * 0.55, sy * p.radius * 0.5, 1.6 + powerTier * 0.3, 0, TAU);
+        ctx.fill();
+      }
+    }
     ctx.restore();
 
-    // Turret + barrel.
+    // Turret + barrel — silhouette follows the equipped weapon, see
+    // data/loadout.ts's WEAPONS and Game.playerShoot.
     ctx.save();
     ctx.rotate(p.aim);
     const rec = -p.recoil * 3.4;
@@ -740,15 +812,7 @@ export class Renderer {
     ctx.beginPath();
     ctx.arc(0, 0, p.radius * 0.66, 0, TAU);
     ctx.fill();
-    ctx.fillStyle = css(0x5f7893);
-    ctx.fillRect(rec + p.radius * 0.4, -2.6, p.radius * 1.5, 5.2);
-    ctx.fillStyle = css(0x8fb4d6);
-    ctx.fillRect(rec + p.radius * 1.5, -2.0, p.radius * 0.42, 4);
-    // Heat glow on the barrel.
-    if (p.heat > 0.1) {
-      ctx.fillStyle = rgba(p.overheated ? 0xff4f5e : 0xffb347, p.heat * 0.75);
-      ctx.fillRect(rec + p.radius * 1.2, -2.6, p.radius * 0.75, 5.2);
-    }
+    this.drawPlayerBarrel(ctx, p, rec);
     ctx.restore();
 
     // Cockpit light.
@@ -785,9 +849,11 @@ export class Renderer {
       }
     }
 
-    gctx.fillStyle = rgba(0x46d8ff, 0.22);
+    // Ambient glow — a soft floor plus an escalating boost from the power
+    // tier, so a heavily-teched-up run reads as visibly brighter at a glance.
+    gctx.fillStyle = rgba(powerTier >= 3 ? 0xffcc66 : 0x46d8ff, 0.22 + powerTier * 0.05);
     gctx.beginPath();
-    gctx.arc(p.x, p.y, p.radius * 1.7, 0, TAU);
+    gctx.arc(p.x, p.y, p.radius * (1.7 + powerTier * 0.18), 0, TAU);
     gctx.fill();
 
     // Health ring, only when hurt.
@@ -802,6 +868,75 @@ export class Renderer {
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.radius + 8, -Math.PI / 2, -Math.PI / 2 + TAU * pct);
       ctx.stroke();
+    }
+  }
+
+  /** Barrel silhouette for the equipped weapon. Already rotated to `p.aim`; origin is the turret hub. */
+  private drawPlayerBarrel(ctx: CanvasRenderingContext2D, p: Player, rec: number) {
+    const r = p.radius;
+    const heatColor = p.overheated ? 0xff4f5e : 0xffb347;
+
+    if (p.weapon === 'dualmg') {
+      for (const side of [-1, 1]) {
+        const oy = side * 3.2;
+        ctx.fillStyle = css(0x5f7893);
+        ctx.fillRect(rec + r * 0.4, oy - 1.6, r * 1.4, 3.2);
+        ctx.fillStyle = css(0x8fb4d6);
+        ctx.fillRect(rec + r * 1.4, oy - 1.3, r * 0.36, 2.6);
+        if (p.heat > 0.1) {
+          ctx.fillStyle = rgba(heatColor, p.heat * 0.75);
+          ctx.fillRect(rec + r * 1.1, oy - 1.6, r * 0.7, 3.2);
+        }
+      }
+      return;
+    }
+
+    if (p.weapon === 'shotgun') {
+      ctx.fillStyle = css(0x5f7893);
+      ctx.beginPath();
+      ctx.moveTo(rec + r * 0.4, -3.2);
+      ctx.lineTo(rec + r * 1.05, -5.4);
+      ctx.lineTo(rec + r * 1.05, 5.4);
+      ctx.lineTo(rec + r * 0.4, 3.2);
+      ctx.closePath();
+      ctx.fill();
+      if (p.heat > 0.1) {
+        ctx.fillStyle = rgba(heatColor, p.heat * 0.75);
+        ctx.beginPath();
+        ctx.arc(rec + r * 1.0, 0, 2.6, 0, TAU);
+        ctx.fill();
+      }
+      return;
+    }
+
+    if (p.weapon === 'rocket') {
+      ctx.fillStyle = css(0x5f7893);
+      ctx.fillRect(rec + r * 0.35, -4.4, r * 1.5, 8.8);
+      ctx.fillStyle = css(0x2a3340);
+      ctx.beginPath();
+      ctx.arc(rec + r * 1.85, 0, 3.4, 0, TAU);
+      ctx.fill();
+      ctx.strokeStyle = rgba(0xff4f5e, 0.7);
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(rec + r * 0.5, -4.4);
+      ctx.lineTo(rec + r * 0.5, 4.4);
+      ctx.stroke();
+      if (p.heat > 0.1) {
+        ctx.fillStyle = rgba(heatColor, p.heat * 0.6);
+        ctx.fillRect(rec + r * 1.2, -4.4, r * 0.6, 8.8);
+      }
+      return;
+    }
+
+    // Default: rifle.
+    ctx.fillStyle = css(0x5f7893);
+    ctx.fillRect(rec + r * 0.4, -2.6, r * 1.5, 5.2);
+    ctx.fillStyle = css(0x8fb4d6);
+    ctx.fillRect(rec + r * 1.5, -2.0, r * 0.42, 4);
+    if (p.heat > 0.1) {
+      ctx.fillStyle = rgba(heatColor, p.heat * 0.75);
+      ctx.fillRect(rec + r * 1.2, -2.6, r * 0.75, 5.2);
     }
   }
 
@@ -823,6 +958,7 @@ export class Renderer {
 
       ctx.save();
       ctx.translate(e.x, e.y - (e.flying ? 8 : 0));
+      ctx.rotate(e.angle);
       drawEnemy(ctx, {
         shape: e.def.shape, r: e.radius, angle: e.angle, anim: e.anim, gait: e.gait,
         color: e.def.color, accent: e.def.accent, flash: e.hitFlash,
@@ -936,6 +1072,7 @@ export class Renderer {
 
       ctx.save();
       ctx.translate(d.x, d.y + bob);
+      ctx.rotate(d.angle);
       drawDrone(ctx, {
         r: d.radius, angle: d.angle, anim: d.anim, flash: d.hitFlash,
         hpPct: d.hp / d.maxHp, cargoPct: d.cargo / d.cargoMax,
@@ -960,9 +1097,13 @@ export class Renderer {
     }
   }
 
-  private drawPickups(ctx: CanvasRenderingContext2D, gctx: CanvasRenderingContext2D, game: Game) {
+  private drawPickups(
+    ctx: CanvasRenderingContext2D, gctx: CanvasRenderingContext2D, game: Game,
+    view: ReturnType<Renderer['frustum']>,
+  ) {
     for (const q of game.pickups) {
       if (q.dead) continue;
+      if (!this.visible(view, q.x, q.y, q.radius + 20)) continue;
       const bob = Math.sin(q.bob) * 2.5;
       const fade = q.life < 4 ? clamp(q.life / 4, 0, 1) : 1;
       const col = q.kind === 'essence' ? 0xb47cff
@@ -989,14 +1130,20 @@ export class Renderer {
     }
   }
 
-  private drawProjectiles(ctx: CanvasRenderingContext2D, gctx: CanvasRenderingContext2D, game: Game) {
+  private drawProjectiles(
+    ctx: CanvasRenderingContext2D, gctx: CanvasRenderingContext2D, game: Game,
+    view: ReturnType<Renderer['frustum']>,
+  ) {
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     for (const p of game.projectiles) {
       if (p.dead) continue;
 
       if (p.kind === 'mortar') {
-        // Ground marker + arcing shell.
+        // Ground marker + arcing shell — either can be on-screen while the other isn't.
+        const markerR = (p.splash || 60) + 20;
+        if (!this.visible(view, p.targetX, p.targetY, markerR)
+          && !this.visible(view, p.x, p.y - p.z, p.size + 20)) continue;
         const t = p.flightTotal > 0 ? p.flightTime / p.flightTotal : 0;
         ctx.strokeStyle = rgba(0xffb066, 0.35 + t * 0.4);
         ctx.lineWidth = 1.5;
@@ -1015,6 +1162,7 @@ export class Renderer {
       }
 
       if (p.kind === 'rocket') {
+        if (!this.visible(view, p.x, p.y, p.size * 3 + 20)) continue;
         // Solid warhead with fins and a flame, rather than a tracer streak.
         const a = Math.atan2(p.vy, p.vx);
         ctx.save();
@@ -1069,6 +1217,7 @@ export class Renderer {
 
       const speed = Math.hypot(p.vx, p.vy);
       const len = clamp(speed * 0.016, 4, 26);
+      if (!this.visible(view, p.x, p.y, len + p.size + 20)) continue;
       const a = Math.atan2(p.vy, p.vx);
       const tailX = p.x - Math.cos(a) * len;
       const tailY = p.y - Math.sin(a) * len;
@@ -1092,10 +1241,16 @@ export class Renderer {
     ctx.restore();
   }
 
-  private drawEffects(ctx: CanvasRenderingContext2D, gctx: CanvasRenderingContext2D, game: Game) {
+  private drawEffects(
+    ctx: CanvasRenderingContext2D, gctx: CanvasRenderingContext2D, game: Game,
+    view: ReturnType<Renderer['frustum']>,
+  ) {
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     for (const e of game.effects) {
+      // Arcs/beams span two points — either end being on-screen is enough to draw.
+      const margin = Math.max(e.radius, e.width * 3) + 20;
+      if (!this.visible(view, e.x, e.y, margin) && !this.visible(view, e.x2, e.y2, margin)) continue;
       const t = clamp(e.life / e.maxLife, 0, 1);
       switch (e.kind) {
         case 'arc': {
@@ -1172,6 +1327,7 @@ export class Renderer {
     ctx: CanvasRenderingContext2D,
     gctx: CanvasRenderingContext2D,
     game: Game,
+    view: ReturnType<Renderer['frustum']>,
     additivePass: boolean,
   ) {
     const P = game.particles;
@@ -1182,10 +1338,13 @@ export class Renderer {
       const isAdd = P.additive[i] === 1;
       if (isAdd !== additivePass) continue;
 
-      const t = P.life[i] / P.maxLife[i];
-      const col = P.color[i];
       const x = P.x[i], y = P.y[i];
       const s = P.size[i];
+      // Generous margin: covers the Ring/Smoke growth factor and the Spark trail length.
+      if (!this.visible(view, x, y, s * 2 + 16)) continue;
+
+      const t = P.life[i] / P.maxLife[i];
+      const col = P.color[i];
 
       switch (P.kind[i]) {
         case PKind.Spark: {

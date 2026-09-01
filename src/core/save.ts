@@ -1,5 +1,46 @@
 import type { SfxName } from './audio';
 
+/**
+ * Exposed by electron/preload.cjs. Present only under Electron — everywhere
+ * else (plain web, Capacitor) storage stays on localStorage, unchanged.
+ */
+declare global {
+  interface Window {
+    swarmNative?: {
+      readFileSync(name: string): string | null;
+      writeFile(name: string, content: string): void;
+    };
+  }
+}
+
+/**
+ * Storage backend, swapped transparently so every call site below stays
+ * synchronous either way. Electron writes a real file in the OS user-data
+ * directory instead of localStorage so a tool like Steam Cloud — which syncs
+ * files, not browser storage — can actually back it up. Reads go through
+ * `ipcRenderer.sendSync` in the preload bridge, which is the one thing that
+ * keeps this synchronous instead of forcing `loadSave`/`loadRun` (and every
+ * one of their callers, right up through `Progress`'s constructor) to become
+ * async.
+ */
+function readStorage(key: string): string | null {
+  const native = typeof window !== 'undefined' ? window.swarmNative : undefined;
+  return native ? native.readFileSync(key) : localStorage.getItem(key);
+}
+
+function writeStorage(key: string, value: string) {
+  const native = typeof window !== 'undefined' ? window.swarmNative : undefined;
+  if (native) native.writeFile(key, value);
+  else localStorage.setItem(key, value);
+}
+
+/** An empty file reads back as falsy, same as a missing key — good enough as a delete. */
+function removeStorage(key: string) {
+  const native = typeof window !== 'undefined' ? window.swarmNative : undefined;
+  if (native) native.writeFile(key, '');
+  else localStorage.removeItem(key);
+}
+
 /** Everything that survives between runs. Versioned so old saves can migrate. */
 export interface SaveData {
   version: number;
@@ -54,6 +95,8 @@ export interface SaveData {
     haptics: boolean;
     /** 'auto' follows the browser's language; the rest force one. */
     locale: 'auto' | 'en' | 'ru' | 'de' | 'es' | 'fr';
+    /** New Game+ tier, 1-10. Only offered once the campaign has been cleared once. */
+    ngTier: number;
   };
 }
 
@@ -83,13 +126,14 @@ export function emptySave(): SaveData {
       autoAim: false, autoMine: false,
       uiScale: 1, southpaw: false, haptics: true,
       locale: 'auto',
+      ngTier: 1,
     },
   };
 }
 
 export function loadSave(): SaveData {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = readStorage(KEY);
     if (!raw) return emptySave();
     const parsed = JSON.parse(raw) as Partial<SaveData>;
     const base = emptySave();
@@ -118,7 +162,7 @@ const WRITE_INTERVAL = 1000;
 
 function write(data: SaveData) {
   try {
-    localStorage.setItem(KEY, JSON.stringify(data));
+    writeStorage(KEY, JSON.stringify(data));
     lastWrite = Date.now();
   } catch {
     /* quota or private mode — the run simply won't persist */
@@ -161,7 +205,7 @@ export function saveNow(data: SaveData) {
 /* -------------------------------------------------------------------------- */
 
 const RUN_KEY = 'swarm.run.v1';
-export const RUN_SNAPSHOT_VERSION = 2;
+export const RUN_SNAPSHOT_VERSION = 3;
 
 /**
  * A resumable run.
@@ -173,7 +217,7 @@ export const RUN_SNAPSHOT_VERSION = 2;
  */
 export interface RunSnapshot {
   v: number;
-  mode: 'campaign' | 'endless';
+  mode: 'campaign' | 'endless' | 'skirmish';
   levelIndex: number;
   seed: number;
   waveIndex: number;
@@ -187,6 +231,9 @@ export interface RunSnapshot {
   playerY: number;
   tech: string[];
   unlocked: string[];
+  weaponsOwned: string[];
+  weapon: string;
+  armorTier: number;
   buildings: { k: string; tx: number; ty: number; hp: number }[];
   /** Remaining ore per seam, in world.nodes order. */
   nodes: number[];
@@ -201,13 +248,13 @@ export interface RunSnapshot {
 
 export function saveRun(snap: RunSnapshot) {
   try {
-    localStorage.setItem(RUN_KEY, JSON.stringify(snap));
+    writeStorage(RUN_KEY, JSON.stringify(snap));
   } catch { /* ignore */ }
 }
 
 export function loadRun(): RunSnapshot | null {
   try {
-    const raw = localStorage.getItem(RUN_KEY);
+    const raw = readStorage(RUN_KEY);
     if (!raw) return null;
     const snap = JSON.parse(raw) as RunSnapshot;
     // A snapshot from an older layout cannot be trusted against new code.
@@ -220,7 +267,7 @@ export function loadRun(): RunSnapshot | null {
 }
 
 export function clearRun() {
-  try { localStorage.removeItem(RUN_KEY); } catch { /* ignore */ }
+  try { removeStorage(RUN_KEY); } catch { /* ignore */ }
 }
 
 export function hasRun() {
@@ -228,7 +275,7 @@ export function hasRun() {
 }
 
 export function wipeSave() {
-  try { localStorage.removeItem(KEY); } catch { /* ignore */ }
+  try { removeStorage(KEY); } catch { /* ignore */ }
   clearRun();
 }
 

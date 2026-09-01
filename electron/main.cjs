@@ -1,7 +1,36 @@
-const { app, BrowserWindow, Menu, shell } = require('electron');
+const { app, BrowserWindow, Menu, shell, ipcMain } = require('electron');
 const path = require('node:path');
+const fs = require('node:fs');
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+
+/**
+ * Save files live under Electron's per-OS user-data directory (e.g.
+ * %APPDATA%/SWARM on Windows) — point Steam Cloud's sync path at this same
+ * directory once the app is registered in Steamworks. `name` is a save.ts
+ * storage key (`swarm.save.v1` / `swarm.run.v1`); it never contains path
+ * separators, so joining it in directly is safe.
+ */
+function saveFilePath(name) {
+  return path.join(app.getPath('userData'), `${name}.json`);
+}
+
+ipcMain.on('save:read', (event, name) => {
+  try {
+    event.returnValue = fs.readFileSync(saveFilePath(name), 'utf8');
+  } catch {
+    event.returnValue = null;
+  }
+});
+
+ipcMain.on('save:write', (event, name, content) => {
+  try {
+    fs.mkdirSync(app.getPath('userData'), { recursive: true });
+    fs.writeFileSync(saveFilePath(name), content, 'utf8');
+  } catch {
+    /* best-effort — a failed write just means this session doesn't persist */
+  }
+});
 
 function createWindow() {
   const win = new BrowserWindow({

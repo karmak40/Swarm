@@ -46,7 +46,10 @@ const reseedRandom = (n: number) => { mathSeed = n >>> 0; };
 
 /* ------------------------------------------------------------------------- */
 
-import { BUILDINGS, BUILD_ORDER, type BuildingKind } from '../data/buildings';
+import {
+  BUILDINGS, BUILD_ORDER, BUILD_CATEGORIES, CATEGORY_KEY_CODE, HOTKEY_CODES,
+  buildingsInCategory, type BuildCategory, type BuildingKind,
+} from '../data/buildings';
 import { ENEMIES } from '../data/enemies';
 import { RELIC_UPGRADES, UPGRADES_BY_ID } from '../data/relicUpgrades';
 import { ENDLESS_BOSS_INTERVAL, endlessBudget, endlessScaling, isEndlessBossWave } from '../data/levels';
@@ -54,7 +57,9 @@ import { WaveDirector } from '../game/waves';
 import { clearRun, loadRun, saveRun } from '../core/save';
 import { QUALITY } from '../core/platform';
 import { TouchInput } from '../core/touch';
-import { LEVELS, waveScaling } from '../data/levels';
+import { LEVELS, waveScaling, ngDifficultyMult, makeSkirmishLevel } from '../data/levels';
+import { WEAPONS, WEAPON_KINDS, ARMOR_TIERS } from '../data/loadout';
+import { TECH_CARDS } from '../data/tech';
 import { Game } from '../game/game';
 import { TILE } from '../game/world';
 import type { Input } from '../core/input';
@@ -593,6 +598,199 @@ function testPulseLaser() {
     `lance ${lance.beamFrames}f vs pulse ${vsBrute.beamFrames}f`);
 }
 
+/**
+ * Essence-bought weapons and armor (data/loadout.ts). Distinct from tech
+ * cards and the relic Armoury — this is its own essence sink the player
+ * opts into mid-run, so it needs its own coverage: buying gates on cost,
+ * re-equipping an owned weapon is free, armor tiers stack correctly without
+ * a tech card's maxHp recompute wiping the bonus, and both survive the
+ * carry-over into the next sector of the same campaign attempt.
+ */
+function testLoadout() {
+  console.log('\n▸ loadout (essence-bought weapons and armor)');
+
+  check('rifle is free and every other weapon costs essence',
+    WEAPONS.rifle.cost === 0 && WEAPON_KINDS.filter((k) => k !== 'rifle').every((k) => WEAPONS[k].cost > 0));
+  check('armor tier 0 is free, tiers after it climb in cost and hp',
+    ARMOR_TIERS[0].cost === 0 && ARMOR_TIERS[0].hpBonus === 0 &&
+    ARMOR_TIERS.every((a, i) => i === 0 || (a.cost > ARMOR_TIERS[i - 1].cost && a.hpBonus > ARMOR_TIERS[i - 1].hpBonus)));
+
+  const game = new Game();
+  game.startLevel(0);
+  game.essence = 0;
+
+  check('buying a weapon with no essence fails', !game.buyWeapon('rocket'));
+  check('weapon stays the default on a failed buy', game.player.weapon === 'rifle');
+
+  game.essence = 1000;
+  const before = game.essence;
+  check('buying an affordable weapon succeeds', game.buyWeapon('rocket'));
+  check('the cost is actually deducted', game.essence === before - WEAPONS.rocket.cost,
+    `${game.essence} vs expected ${before - WEAPONS.rocket.cost}`);
+  check('the bought weapon is equipped', game.player.weapon === 'rocket');
+  check('the bought weapon is remembered as owned', game.player.weaponsOwned.has('rocket'));
+
+  const afterFirstBuy = game.essence;
+  check('re-equipping an already-owned weapon is free', game.buyWeapon('rifle') && game.essence === afterFirstBuy);
+  check('switching back to an owned weapon is also free', game.buyWeapon('rocket') && game.essence === afterFirstBuy);
+
+  // Firing actually differs per weapon, not just the data table.
+  game.player.weapon = 'rocket';
+  const firing = firingInput();
+  let sawRocket = false;
+  for (let i = 0; i < 60 * 3 && !sawRocket; i++) {
+    game.update(DT, firing);
+    if (game.projectiles.some((p) => !p.dead && p.kind === 'rocket')) sawRocket = true;
+  }
+  check('the rocket launcher actually fires a rocket-kind projectile', sawRocket);
+
+  // Armor: gated on essence, stacks HP correctly, tier order.
+  const armorGame = new Game();
+  armorGame.startLevel(0);
+  armorGame.essence = 0;
+  check('buying armor with no essence fails', !armorGame.buyArmorTier());
+  check('armor tier stays 0 on a failed buy', armorGame.player.armorTier === 0);
+
+  const baseMaxHp = armorGame.player.maxHp;
+  armorGame.essence = 10000;
+  check('tier 1 buys', armorGame.buyArmorTier());
+  check('tier 1 raises max hp by exactly its bonus',
+    armorGame.player.maxHp === baseMaxHp + ARMOR_TIERS[1].hpBonus,
+    `${armorGame.player.maxHp} vs ${baseMaxHp + ARMOR_TIERS[1].hpBonus}`);
+  check('tier 2 buys next, not a skip', armorGame.buyArmorTier() && armorGame.player.armorTier === 2);
+  check('tier 3 buys last', armorGame.buyArmorTier() && armorGame.player.armorTier === 3);
+  check('no tier 4 exists to buy', !armorGame.buyArmorTier());
+  check('stacked armor totals the full tier-3 bonus',
+    armorGame.player.maxHp === baseMaxHp + ARMOR_TIERS[3].hpBonus,
+    `${armorGame.player.maxHp} vs ${baseMaxHp + ARMOR_TIERS[3].hpBonus}`);
+
+  // A tech card that touches playerMaxHp must not silently erase the armor
+  // bonus already paid for — this was a real bug caught while wiring this up.
+  const exoFrame = TECH_CARDS.find((c) => c.id === 'exo_frame');
+  if (exoFrame) {
+    const maxHpBeforeTech = armorGame.player.maxHp;
+    armorGame.takeTech(exoFrame);
+    check('a maxHp-boosting tech card keeps the armor bonus, not just its own perk',
+      armorGame.player.maxHp > maxHpBeforeTech + ARMOR_TIERS[3].hpBonus * 0.01,
+      `${armorGame.player.maxHp} vs pre-tech ${maxHpBeforeTech}`);
+  }
+
+  // Loadout carries into the next sector of the same campaign attempt, same as tech.
+  armorGame.essence = 1000;
+  armorGame.buyWeapon('dualmg');
+  const carry = armorGame.carryOver();
+  check('carryOver captures the loadout',
+    carry.weaponsOwned.includes('dualmg') && carry.weapon === 'dualmg' && carry.armorTier === 3);
+
+  const next = new Game();
+  next.startLevel(1, carry);
+  check('the next sector keeps the owned weapon equipped', next.player.weapon === 'dualmg');
+  check('the next sector keeps the weapon unlock', next.player.weaponsOwned.has('dualmg'));
+  check('the next sector keeps the armor tier', next.player.armorTier === 3);
+  check('the next sector applies the armor hp bonus on top of its own perks',
+    next.player.maxHp > Math.round(160 /* PLAYER_BASE_HP */ * next.perks.playerMaxHp),
+    `${next.player.maxHp}`);
+}
+
+/**
+ * The chassis's escalating tech-power glow (Renderer.drawPlayer) reads
+ * `game.powerTier`, and the ambient-spark trigger in updatePlayer gates on
+ * the same getter — both assume it climbs with techTaken and caps at 4.
+ * Nothing here can check pixels, but the underlying state driving them is
+ * exactly as testable as the muzzle-flare state is elsewhere in this file.
+ */
+function testPowerTier() {
+  console.log('\n▸ power tier (tech-driven chassis glow)');
+  const game = new Game();
+  game.startLevel(0);
+  check('a fresh run starts at power tier 0', game.powerTier === 0, String(game.powerTier));
+
+  const card = TECH_CARDS[0];
+  for (let i = 0; i < 2; i++) game.takeTech(card);
+  check('2 tech cards reach tier 1', game.powerTier === 1, String(game.powerTier));
+  for (let i = 0; i < 2; i++) game.takeTech(card);
+  check('4 tech cards reach tier 2', game.powerTier === 2, String(game.powerTier));
+  for (let i = 0; i < 4; i++) game.takeTech(card);
+  check('8 tech cards reach the tier 4 cap', game.powerTier === 4, String(game.powerTier));
+  for (let i = 0; i < 10; i++) game.takeTech(card);
+  check('power tier never exceeds its cap however much tech piles up',
+    game.powerTier === 4, String(game.powerTier));
+}
+
+/**
+ * The Force Field's whole point is a three-way split most other defences
+ * don't need: charge lifecycle (power-gated), ranged-only interception
+ * (redirects into the dome's own hp instead of the real target), and a
+ * recharge that's deliberately slower than the first charge. Each is tested
+ * directly against the private methods rather than through emergent enemy
+ * AI targeting, which would make "did the field actually intercept this, or
+ * did the shooter just happen to aim elsewhere" a coin flip.
+ */
+function testForceField() {
+  console.log('\n▸ force field (dome blocks ranged, not melee)');
+  const def = BUILDINGS.forcefield;
+  check('force field is defined', !!def);
+  if (!def) return;
+  check('force field costs more essence than the Aegis Pylon', def.essence > BUILDINGS.shield.essence);
+  check('force field recharges slower than it first charges',
+    (def.rechargeTime ?? 0) > (def.chargeTime ?? 0));
+
+  const game = new Game();
+  game.startLevel(5);
+  game.ore = 99999;
+  game.essence = 99999;
+  const internals = game as unknown as {
+    place: (d: typeof def, tx: number, ty: number) => void;
+    fieldAt: (x: number, y: number) => { fieldHp: number } | null;
+    absorbIntoField: (x: number, y: number, amount: number) => boolean;
+  };
+  // Real power, not the 0.15 brownout floor — charging is power-gated (see
+  // updateForceField), and this test wants to observe it complete, not the
+  // separate underpowered-slows-it-down behaviour.
+  internals.place(BUILDINGS.generator, game.world.coreTx - 3, game.world.coreTy - 3);
+  internals.place(def, game.world.coreTx + 2, game.world.coreTy);
+  const field = game.buildings[1];
+  check('force field is placed', !!field && field.kind === 'forcefield');
+  if (!field) return;
+
+  const input = idleInput();
+  // Let construction finish for real — the charge-init hook only fires on
+  // the frame `progress` crosses 1, so jumping straight to `progress = 1`
+  // would skip it and silently test nothing.
+  for (let i = 0; i < 60 * (def.buildTime + 1) && !field.built; i++) game.update(DT, input);
+  check('force field finishes construction', field.built, `progress=${field.progress}`);
+  check('a freshly-built field starts charging, not already active',
+    field.fieldHp === 0 && field.fieldChargeTimer > 0 && field.fieldChargeTotal === (def.chargeTime ?? 6));
+  check('nothing is protected before the field finishes charging',
+    internals.fieldAt(game.core.x, game.core.y) === null);
+
+  for (let i = 0; i < 60 * ((def.chargeTime ?? 6) + 1) && field.fieldHp <= 0; i++) game.update(DT, input);
+  check('the field comes online after chargeTime', field.fieldHp > 0, `fieldHp=${field.fieldHp}`);
+  check('the active field covers the core', internals.fieldAt(game.core.x, game.core.y) !== null);
+
+  const fieldHpBefore = field.fieldHp;
+  const coreHpBefore = game.core.hp;
+  const absorbed = internals.absorbIntoField(game.core.x, game.core.y, 50);
+  check('ranged damage aimed at the core is absorbed by the field', absorbed);
+  check('the field, not the core, actually loses the hp',
+    field.fieldHp === fieldHpBefore - 50 && game.core.hp === coreHpBefore,
+    `field ${field.fieldHp} (was ${fieldHpBefore}), core ${game.core.hp}`);
+
+  const coreHpBefore2 = game.core.hp;
+  game.damageCore(30);
+  check('melee/direct damage bypasses the field entirely', game.core.hp === coreHpBefore2 - 30,
+    `${game.core.hp} vs expected ${coreHpBefore2 - 30}`);
+
+  field.fieldHp = 5;
+  const popped = internals.absorbIntoField(game.core.x, game.core.y, 999);
+  check('enough damage still pops the field', popped && field.fieldHp === 0);
+  check('the recharge after popping uses rechargeTime, not chargeTime',
+    field.fieldChargeTimer === (def.rechargeTime ?? 16) && field.fieldChargeTotal === (def.rechargeTime ?? 16),
+    `timer=${field.fieldChargeTimer}`);
+  check('a popped field no longer protects anything',
+    internals.fieldAt(game.core.x, game.core.y) === null);
+}
+
 function testNoShakeWhileFiring() {
   console.log('\n▸ camera stays still while shooting');
 
@@ -672,6 +870,112 @@ function testBossTuning() {
 }
 
 /**
+ * The Broodmother reuses the boss ability loop (telegraph → cast → resolve)
+ * without being a wave boss herself — this is the load-bearing assumption
+ * behind relaxing `updateBossAbilities`'s gate from `e.boss` to
+ * `e.def.abilities`. If that regressed back to boss-only, she'd stand there
+ * forever never reinforcing anything, silently defeating her whole point.
+ */
+function testBroodmother() {
+  console.log('\n▸ broodmother (non-boss ability casting)');
+  const queenDef = ENEMIES.queen;
+  check('broodmother is defined', !!queenDef);
+  if (!queenDef) return;
+  check('broodmother has a spawn ability', (queenDef.abilities ?? []).some((a) => a.id === 'spawn'));
+  check('broodmother deals no direct damage', queenDef.damage === 0 && queenDef.attackRate === 0);
+  check('broodmother appears in a real sector roster', LEVELS.some((lv) => lv.roster.includes('queen')));
+  check('broodmother is not flagged as a wave boss', !queenDef.boss);
+
+  const game = new Game();
+  game.startLevel(4);
+  const spot = game.world.findOpenNear(game.world.coreX + 200, game.world.coreY);
+  const queen = game.spawnEnemy(queenDef, spot.x, spot.y, 1, 1, false);
+  const input = idleInput();
+
+  let sawChild = false;
+  for (let i = 0; i < 60 * 8 && !sawChild; i++) {
+    game.update(DT, input);
+    if (!queen.dead && game.enemies.some((e) => e.spawnedBy === queen.id)) sawChild = true;
+  }
+  check('broodmother actually casts spawn and reinforces the wave', sawChild);
+}
+
+/**
+ * The Scorpion is the other reuse of the (no-longer-boss-exclusive) ability
+ * loop: `charge` should fire on cooldown and actually move her at burst
+ * speed, not just flip a flag nothing reads.
+ */
+function testScorpion() {
+  console.log('\n▸ scorpion (charge burst)');
+  const def = ENEMIES.scorpion;
+  check('scorpion is defined', !!def);
+  if (!def) return;
+  check('scorpion has a charge ability', (def.abilities ?? []).some((a) => a.id === 'charge'));
+  check('scorpion is a charger, not ranged or support', def.behavior === 'charger');
+  check('scorpion appears in a real sector roster', LEVELS.some((lv) => lv.roster.includes('scorpion')));
+  check('scorpion is not flagged as a wave boss', !def.boss);
+
+  const game = new Game();
+  game.startLevel(3);
+  const spot = game.world.findOpenNear(game.world.coreX + 450, game.world.coreY);
+  const scorpion = game.spawnEnemy(def, spot.x, spot.y, 1, 1, false);
+  const input = idleInput();
+
+  let chargedAt = -1;
+  let peakSpeed = 0;
+  for (let i = 0; i < 60 * 8 && chargedAt < 0; i++) {
+    game.update(DT, input);
+    if (scorpion.dead) break;
+    if (scorpion.chargeTimer > 0) {
+      chargedAt = i;
+      peakSpeed = Math.hypot(scorpion.vx, scorpion.vy);
+    }
+  }
+  check('scorpion actually enters a charge burst', chargedAt >= 0, `chargeTimer never rose in ${60 * 8} frames`);
+  check('the charge is a real speed burst, not cosmetic', peakSpeed > def.speed * 2,
+    `${peakSpeed.toFixed(0)}px/s vs base ${def.speed}px/s`);
+}
+
+/**
+ * The Void Wasp is the first flier that isn't just "Moth with different
+ * numbers": `flies: true` decouples flying from `behavior: 'flyer'`, and
+ * enemyDesire() got a new branch so a flying+ranged unit holds its stand-off
+ * range instead of beelining into melee contact like every other flier does.
+ * Both are load-bearing assumptions worth pinning down directly.
+ */
+function testWasp() {
+  console.log('\n▸ wasp (ranged flier)');
+  const def = ENEMIES.wasp;
+  check('wasp is defined', !!def);
+  if (!def) return;
+  check('wasp is ranged, not the melee-flyer behavior', def.behavior === 'ranged');
+  check('wasp is marked as flying via the decoupled flag, not behavior', def.flies === true);
+  check('wasp appears in a real sector roster', LEVELS.some((lv) => lv.roster.includes('wasp')));
+
+  const game = new Game();
+  game.startLevel(3);
+  const spot = game.world.findOpenNear(game.world.coreX + 400, game.world.coreY);
+  const wasp = game.spawnEnemy(def, spot.x, spot.y, 1, 1, false);
+  check('Enemy.flying reads true for a flies:true def, independent of behavior', wasp.flying);
+
+  const input = idleInput();
+  let firedAt = -1;
+  let holdDist = -1;
+  for (let i = 0; i < 60 * 10 && firedAt < 0; i++) {
+    const before = game.projectiles.filter((p) => !p.dead).length;
+    game.update(DT, input);
+    const after = game.projectiles.filter((p) => !p.dead).length;
+    if (after > before) {
+      firedAt = i;
+      holdDist = Math.hypot(wasp.x - game.world.coreX, wasp.y - game.world.coreY);
+    }
+  }
+  check('wasp actually opens fire like a ranged unit', firedAt >= 0, `never fired in ${60 * 10} frames`);
+  check('wasp holds stand-off range rather than closing to melee',
+    holdDist > def.attackRange * 0.4, `held at ${holdDist.toFixed(0)}px, attackRange ${def.attackRange}px`);
+}
+
+/**
  * Drives a real level to its win state by fast-forwarding to the boss wave and
  * executing the boss, then checks the unlock survives into a fresh profile.
  */
@@ -692,6 +996,77 @@ function clearLevelForReal(game: Game, levelIndex: number): boolean {
     }
   }
   return game.phase === 'won';
+}
+
+/**
+ * NG+ tiers and the custom skirmish map. NG+ should be inert at tier 1 (so
+ * nothing changes for players who never touch it), scale a real sector's
+ * difficulty when raised, and never leak into endless mode. Skirmish should
+ * build a sane one-off `LevelDef`, actually be winnable through the real
+ * boss-clear path, and — the important invariant — never touch campaign
+ * progress, since it isn't a `LEVELS` entry.
+ */
+function testSkirmishAndNgPlus() {
+  console.log('\n▸ NG+ and skirmish mode');
+
+  check('NG+ tier 1 changes nothing', ngDifficultyMult(1) === 1, String(ngDifficultyMult(1)));
+  check('NG+ climbs monotonically with tier',
+    ngDifficultyMult(10) > ngDifficultyMult(5) && ngDifficultyMult(5) > ngDifficultyMult(1));
+
+  {
+    const game = new Game();
+    game.progress.data.settings.ngTier = 1;
+    game.startLevel(0);
+    check('NG tier 1 leaves the sector object untouched', game.level === LEVELS[0]);
+    check('game.ngTier reports 1 by default', game.ngTier === 1, String(game.ngTier));
+
+    game.progress.data.settings.ngTier = 5;
+    game.startLevel(0);
+    const expected = LEVELS[0].difficulty * ngDifficultyMult(5);
+    check('NG tier 5 scales sector difficulty', Math.abs(game.level.difficulty - expected) < 1e-9,
+      `${game.level.difficulty} vs ${expected}`);
+    check('game.ngTier reports the applied tier', game.ngTier === 5, String(game.ngTier));
+
+    game.startLevel(0, undefined, undefined, { mode: 'endless' });
+    check('NG+ does not leak into endless mode', game.level.difficulty === LEVELS[0].difficulty,
+      String(game.level.difficulty));
+  }
+
+  const cfg = { size: 'small' as const, biome: 'ash' as const, difficultyTier: 5, gates: 2 };
+  const custom = makeSkirmishLevel(cfg);
+  check('skirmish level is not a real sector', custom.id === -1, String(custom.id));
+  check('skirmish level honours the chosen gate count', custom.spawnPoints === 2, String(custom.spawnPoints));
+  check('skirmish level unlocks every building', custom.unlocked.length === Object.keys(BUILDINGS).length,
+    `${custom.unlocked.length}/${Object.keys(BUILDINGS).length}`);
+  check('skirmish level has a real roster', custom.roster.length > 0 && custom.roster.every((id) => ENEMIES[id]));
+  check('skirmish roster excludes split-only spawns', !custom.roster.includes('blobling'));
+  check('skirmish difficulty follows the chosen tier', custom.difficulty === ngDifficultyMult(5),
+    String(custom.difficulty));
+
+  {
+    const game = new Game();
+    const highestBefore = game.progress.data.highestLevel;
+    const easy = makeSkirmishLevel({ size: 'small', biome: 'ash', difficultyTier: 1, gates: 2 });
+    game.startLevel(easy, undefined, undefined, { mode: 'skirmish' });
+    check('a skirmish run indexes nowhere in LEVELS', game.levelIndex === -1, String(game.levelIndex));
+    check('a skirmish run is never treated as resumable', !game.canSaveRun);
+
+    (game as unknown as { waveIndex: number }).waveIndex = easy.waves - 1;
+    (game as unknown as { nextPlan: unknown }).nextPlan = null;
+    game.prepRemaining = 0.5;
+    const input = idleInput();
+    for (let i = 0; i < 60 * 120 && game.phase !== 'won'; i++) {
+      game.update(DT, input);
+      game.core.hp = game.core.maxHp;
+      for (const e of game.enemies) {
+        game.damageEnemy(e, e.hp + 1, { source: 'player', armorPierce: 999, silent: true });
+      }
+    }
+    check('a skirmish boss wave still resolves to a win', game.phase === 'won', `phase=${game.phase}`);
+    check('a skirmish win pays out relics', game.lastRelicAward > 0, String(game.lastRelicAward));
+    check('a skirmish win never touches campaign progress',
+      game.progress.data.highestLevel === highestBefore, String(game.progress.data.highestLevel));
+  }
 }
 
 function testCampaignPersistence() {
@@ -1748,6 +2123,126 @@ function testFlowFieldAvoidsWalls() {
     w.field.costAt(probeTx - 2, probeTy) === 1);
 }
 
+function testBuildCategories() {
+  console.log('\n▸ build categories');
+
+  // --- data integrity: every building lands in exactly one section, and slot
+  // keys never collide with a sibling in the same section ---
+  const allKinds = Object.keys(BUILDINGS) as BuildingKind[];
+  check('every building has a recognised category',
+    allKinds.every((k) => BUILD_CATEGORIES.includes(BUILDINGS[k].category)),
+    allKinds.filter((k) => !BUILD_CATEGORIES.includes(BUILDINGS[k].category)).join(','));
+
+  for (const cat of BUILD_CATEGORIES) {
+    const kinds = buildingsInCategory(cat, allKinds);
+    const keys = kinds.map((k) => BUILDINGS[k].hotkey);
+    check(`${cat}: slot keys are unique within the section`,
+      keys.length === new Set(keys).size, keys.join(','));
+    check(`${cat}: every slot key resolves to a real KeyboardEvent code`,
+      kinds.every((k) => HOTKEY_CODES[BUILDINGS[k].hotkey] !== undefined),
+      kinds.filter((k) => !HOTKEY_CODES[BUILDINGS[k].hotkey]).join(','));
+  }
+
+  const catCodes = Object.values(CATEGORY_KEY_CODE);
+  check('section keys are distinct from each other',
+    catCodes.length === new Set(catCodes).size, catCodes.join(','));
+  check('section keys never collide with a digit slot key',
+    catCodes.every((c) => !Object.values(HOTKEY_CODES).includes(c)), catCodes.join(','));
+
+  // --- runtime: sector 1 starts with every section populated ---
+  const game = new Game();
+  game.startLevel(0, undefined, FIXED_SEED);
+  check('sector 1 opens with all three sections populated',
+    game.activeCategories.length === 3, game.activeCategories.join(','));
+  check('starting section is a populated one',
+    game.activeCategories.includes(game.buildCategory), game.buildCategory);
+
+  // Reads `game.buildCategory` through a call boundary. A bare `game.buildCategory`
+  // read anywhere below here would resolve, for TypeScript's control-flow analysis,
+  // to whatever literal was last assigned to it directly in *this* function — not
+  // the real runtime value — because TS does not see into `game.update()` or
+  // `game.selectBuilding()` to know they reassign it. That makes later comparisons
+  // against a different literal a spurious "types have no overlap" compile error.
+  // Routing every read through a function call resets the static type to the full
+  // union each time, matching what actually happens at runtime.
+  const cat = (): BuildCategory => game.buildCategory;
+
+  // --- keyboard: section keys switch, digit keys select within the section ---
+  const press = (code: string): Input => ({
+    ...idleInput(),
+    uiCaptured: false,
+    pressed: (c: string) => c === code,
+  } as unknown as Input);
+
+  game.buildCategory = 'resources';
+  game.update(DT, press('KeyX'));                    // towers
+  check('KeyX switches to the towers section', cat() === 'towers', cat());
+
+  game.selectBuilding('turret');
+  check('turret was selected before switching', game.buildKind === 'turret');
+  game.update(DT, press('KeyZ'));                     // resources
+  check('switching sections cancels a pending placement',
+    game.buildKind === null && game.cursorMode === 'normal',
+    `buildKind=${game.buildKind} cursorMode=${game.cursorMode}`);
+  check('the section actually changed', cat() === 'resources', cat());
+
+  // Digit 1 means a different structure depending on which section is open.
+  game.update(DT, press('Digit1'));
+  const inResources = game.buildKind;
+  check('Digit1 in Resources selects the first resources slot',
+    inResources === buildingsInCategory('resources', game.unlockedBuildings)[0]);
+
+  game.buildKind = null;
+  game.update(DT, press('KeyX'));                     // towers
+  game.update(DT, press('Digit1'));
+  const inTowers = game.buildKind;
+  check('Digit1 in Towers selects a different structure than in Resources',
+    inTowers !== inResources, `${inTowers} vs ${inResources}`);
+  check('Digit1 in Towers matches the first towers slot',
+    inTowers === buildingsInCategory('towers', game.unlockedBuildings)[0]);
+
+  // Pressing the same slot key again deselects, as the old flat hotkeys did.
+  game.update(DT, press('Digit1'));
+  check('pressing the same slot key again deselects', game.buildKind === null,
+    String(game.buildKind));
+
+  // --- selectBuilding: the programmatic path the HUD click routing uses ---
+  // 'wall' is the only defence-category structure sector 1 unlocks from the
+  // start; 'shield' is not available yet, and selectBuilding must refuse it
+  // (covered by the very next check) rather than silently select it anyway.
+  game.selectBuilding('wall');                        // defence
+  check('selectBuilding jumps to the right section', cat() === 'defence', cat());
+  check('selectBuilding sets the build kind', game.buildKind === 'wall');
+  check('selectBuilding enters build mode', game.cursorMode === 'build');
+
+  game.selectBuilding(null);
+  check('selectBuilding(null) clears the selection',
+    game.buildKind === null && game.cursorMode === 'normal');
+
+  const before = { cat: cat(), kind: game.buildKind };
+  game.selectBuilding('shield');                      // not unlocked on sector 1
+  check('selectBuilding refuses a locked structure',
+    cat() === before.cat && game.buildKind === before.kind,
+    `cat=${cat()} kind=${game.buildKind}`);
+
+  // --- an empty section cannot be switched into, and is excluded from the list ---
+  game.unlockedBuildings = new Set(
+    [...game.unlockedBuildings].filter((k) => BUILDINGS[k].category !== 'towers'),
+  );
+  check('activeCategories drops a section with nothing unlocked',
+    !game.activeCategories.includes('towers'), game.activeCategories.join(','));
+
+  const stuck = cat();
+  game.update(DT, press('KeyX'));
+  check('pressing the key for an empty section does not switch to it',
+    cat() === stuck, cat());
+
+  // --- a fresh level never opens on a section that turns out to be empty ---
+  const g2 = new Game();
+  g2.startLevel(0, undefined, FIXED_SEED);
+  check('a freshly started level opens on a populated section',
+    g2.activeCategories.includes(g2.buildCategory));
+}
 function testMapScaleSanity() {
   console.log('\n▸ map scale');
   for (const lv of LEVELS) {
@@ -1762,6 +2257,7 @@ console.log('SWARM — headless simulation smoke test');
 testWorldGeneration();
 testSeedReproducibility();
 testMapScaleSanity();
+testBuildCategories();
 testPlacementRules();
 testFlowFieldAvoidsWalls();
 testMining();
@@ -1770,7 +2266,11 @@ testAchievementPerks();
 testRevive();
 testDefeat();
 testCampaignPersistence();
+testSkirmishAndNgPlus();
 testAutoAim();
+testLoadout();
+testPowerTier();
+testForceField();
 testTouchActions();
 testQualityTiers();
 testTouchLayout();
@@ -1786,6 +2286,9 @@ testMissileBattery();
 testPulseLaser();
 testNoShakeWhileFiring();
 testBossTuning();
+testBroodmother();
+testScorpion();
+testWasp();
 testFullLevel(0);
 testFullLevel(2);
 testFullLevel(5);

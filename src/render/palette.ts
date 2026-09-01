@@ -14,11 +14,16 @@ export function css(hex: number): string {
 const rgbaCache = new Map<string, string>();
 
 export function rgba(hex: number, a: number): string {
-  const key = `${hex}|${a.toFixed(3)}`;
+  // Most callers pass a continuously-animated alpha (particle life fraction,
+  // a sine pulse), so a full-precision key almost never repeats and the cache
+  // just adds overhead. Rounding to 1% steps is well below what's visible in
+  // an alpha channel but turns "nearly every call" into "a few hundred buckets".
+  const q = Math.round(a * 100) / 100;
+  const key = `${hex}|${q}`;
   let s = rgbaCache.get(key);
   if (s === undefined) {
     const r = (hex >> 16) & 255, g = (hex >> 8) & 255, b = hex & 255;
-    s = `rgba(${r},${g},${b},${a})`;
+    s = `rgba(${r},${g},${b},${q})`;
     if (rgbaCache.size < 6000) rgbaCache.set(key, s);
   }
   return s;

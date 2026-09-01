@@ -5,7 +5,14 @@ import { describePerk, type PerkDelta } from '../data/perks';
 import {
   CATEGORY_ORDER, RELIC_UPGRADES, categoryLabel, categoryBlurb, relicUpgradeName, relicUpgradeDesc,
 } from '../data/relicUpgrades';
-import { LEVELS, levelName, levelSubtitle, levelBriefing } from '../data/levels';
+import {
+  LEVELS, levelName, levelSubtitle, levelBriefing,
+  BIOME_IDS, biomeLabel, SKIRMISH_SIZES, skirmishSizeLabel, makeSkirmishLevel, ngDifficultyMult,
+  type BiomeId, type SkirmishSize, type SkirmishConfig, type LevelDef,
+} from '../data/levels';
+import {
+  WEAPON_KINDS, WEAPONS, weaponName, weaponDesc, ARMOR_TIERS, armorTierName,
+} from '../data/loadout';
 import { techName, techDesc, type TechCard } from '../data/tech';
 import type { Game } from '../game/game';
 import type { Progress } from '../game/progress';
@@ -22,7 +29,7 @@ import { detectLocale, setLocale, LOCALES, type LocaleCode, t as tr } from '../c
 type ScreenName =
   | 'boot' | 'title' | 'levelSelect' | 'achievements' | 'settings'
   | 'briefing' | 'pause' | 'draft' | 'victory' | 'defeat' | 'campaignEnd' | 'armoury'
-  | 'endlessSelect' | 'tutorial' | null;
+  | 'endlessSelect' | 'customBattle' | 'loadout' | 'tutorial' | null;
 
 /** Minimal shape the title screen needs to advertise a resumable run. */
 export interface ResumeInfo {
@@ -34,6 +41,7 @@ export interface ResumeInfo {
 export interface ScreenCallbacks {
   onStartLevel: (index: number, fresh: boolean) => void;
   onStartEndless: (index: number) => void;
+  onStartSkirmish: (level: LevelDef) => void;
   onResumeRun: () => void;
   onSaveAndQuit: () => void;
   onResume: () => void;
@@ -77,6 +85,8 @@ export class Screens {
   private toasts: HTMLElement;
   private cb: ScreenCallbacks;
   current: ScreenName = null;
+  /** Remembered across visits to the Custom Battle screen so it doesn't reset every time. */
+  private lastSkirmish: SkirmishConfig = { size: 'medium', biome: 'ash', difficultyTier: 1, gates: 3 };
 
   constructor(root: HTMLElement, cb: ScreenCallbacks) {
     this.cb = cb;
@@ -118,6 +128,62 @@ export class Screens {
     b.addEventListener('click', () => { audio.unlock(); audio.play('uiClick'); onClick(); });
     b.addEventListener('pointerenter', () => audio.play('uiHover'));
     return b;
+  }
+
+  /** A labelled row that cycles through a fixed set of options on click. */
+  private cycle<T extends string>(
+    label: string, value: T, options: readonly T[], labels: Record<T, string>,
+    onChange: (v: T) => void,
+  ) {
+    const row = el('div', 'row');
+    row.style.justifyContent = 'space-between';
+    row.appendChild(el('div', 'label', label));
+    const b = el('button', 'btn ghost', labels[value]);
+    b.style.padding = '6px 18px';
+    b.style.minWidth = '120px';
+    b.addEventListener('click', () => {
+      const i = (options.indexOf(value) + 1) % options.length;
+      value = options[i];
+      b.textContent = labels[value];
+      onChange(value);
+      audio.play('uiClick');
+    });
+    row.appendChild(b);
+    return row;
+  }
+
+  /** A labelled row with -/+ buttons stepping an integer through [min, max]. */
+  private stepper(label: string, value: number, min: number, max: number, onChange: (v: number) => void) {
+    const row = el('div', 'row');
+    row.style.justifyContent = 'space-between';
+    row.appendChild(el('div', 'label', label));
+    const controls = el('div', 'row');
+    controls.style.gap = '10px';
+    controls.style.alignItems = 'center';
+    const out = el('div', 'label', String(value));
+    out.style.color = 'var(--accent)';
+    out.style.minWidth = '2ch';
+    out.style.textAlign = 'center';
+    const step = (delta: number) => {
+      const v = Math.max(min, Math.min(max, value + delta));
+      if (v === value) return;
+      value = v;
+      out.textContent = String(value);
+      minus.disabled = value <= min;
+      plus.disabled = value >= max;
+      onChange(value);
+      audio.play('uiClick');
+    };
+    const minus = this.button('−', () => step(-1), 'btn ghost');
+    const plus = this.button('+', () => step(1), 'btn ghost');
+    minus.style.padding = plus.style.padding = '4px 14px';
+    minus.disabled = value <= min;
+    plus.disabled = value >= max;
+    controls.appendChild(minus);
+    controls.appendChild(out);
+    controls.appendChild(plus);
+    row.appendChild(controls);
+    return row;
   }
 
   /* ====================================================================== */
@@ -226,6 +292,10 @@ export class Screens {
           : tr('screens.title.endlessMode', 'Endless mode'),
         () => this.showEndlessSelect(progress), 'btn ghost',
       ));
+      col.appendChild(this.button(
+        tr('screens.title.customBattle', 'Custom battle'),
+        () => this.showCustomBattle(progress), 'btn ghost',
+      ));
     }
     col.appendChild(this.button(
       tr('screens.title.armoury', 'Armoury · {relics} ⬢', { relics: progress.relics }),
@@ -260,7 +330,7 @@ export class Screens {
 
     s.appendChild(stack);
     s.appendChild(el('div', 'hint-bar',
-      tr('screens.title.hintBar', 'WASD move · LMB fire · RMB mine · number keys build · SHIFT dash · TAB stats · ESC pause')));
+      tr('screens.title.hintBar', 'WASD move · LMB fire · RMB mine · number keys build · SHIFT dash · G loadout · TAB stats · ESC pause')));
     this.open('title', s);
   }
 
@@ -278,6 +348,23 @@ export class Screens {
         'Clearing a sector permanently unlocks the next one, so you can pick up from there any time. ' +
         'The map is rolled fresh every deployment — starting a sector again is never the same fight.',
         { cleared: progress.sectorsCleared })));
+
+    // New Game+: unlocked once the campaign has been cleared at least once, so
+    // nobody sees a harder-than-expected sector before they know what "base"
+    // difficulty even feels like.
+    if (progress.data.highestLevel >= LEVELS.length - 1) {
+      const st = progress.data.settings;
+      const ngPanel = el('div', 'panel clip-corner');
+      ngPanel.style.padding = '14px 20px';
+      ngPanel.style.marginBottom = '18px';
+      const mult = ngDifficultyMult(st.ngTier);
+      ngPanel.appendChild(this.stepper(
+        tr('screens.levelSelect.ngTier', 'New Game+ tier — x{mult} enemies', { mult: mult.toFixed(2) }),
+        st.ngTier, 1, 10,
+        (v) => { st.ngTier = v; this.cb.onSettingChange(); this.showLevelSelect(progress); },
+      ));
+      stack.appendChild(ngPanel);
+    }
 
     const row = el('div', 'card-row');
     LEVELS.forEach((lv, i) => {
@@ -493,10 +580,78 @@ export class Screens {
   }
 
   /* ====================================================================== */
+  /* Custom battle (skirmish)                                                */
+  /* ====================================================================== */
+
+  showCustomBattle(progress: Progress) {
+    const s = el('div', 'screen opaque');
+    const stack = el('div', 'stack');
+    stack.appendChild(el('p', 'subtitle', tr('screens.customBattle.subtitle', 'your rules')));
+    stack.appendChild(el('h2', undefined, tr('screens.customBattle.heading', 'Custom Battle')));
+    stack.appendChild(el('p', 'flavor',
+      tr('screens.customBattle.intro',
+        'Configure a one-off map — size, biome, difficulty, hive gates — and deploy with everything already ' +
+        'unlocked. Nothing here touches campaign progress; it is a fight for its own sake.')));
+
+    const cfg = this.lastSkirmish;
+    // Difficulty's label quotes the live multiplier, so any change re-renders
+    // the whole screen rather than patching one control in place — simplest,
+    // and matches how the language cycle and NG+ stepper already do this.
+    const rerender = () => this.showCustomBattle(progress);
+
+    const panel = el('div', 'panel clip-corner');
+    panel.style.padding = '20px 26px';
+    panel.style.width = 'min(480px, 90vw)';
+    panel.style.display = 'flex';
+    panel.style.flexDirection = 'column';
+    panel.style.gap = '14px';
+
+    const sizeLabels = Object.fromEntries(
+      SKIRMISH_SIZES.map((sz): [SkirmishSize, string] => [sz, skirmishSizeLabel(sz).toUpperCase()]),
+    ) as Record<SkirmishSize, string>;
+    panel.appendChild(this.cycle(
+      tr('screens.customBattle.size', 'Map size'), cfg.size, SKIRMISH_SIZES, sizeLabels,
+      (v) => { cfg.size = v; },
+    ));
+
+    const biomeLabels = Object.fromEntries(
+      BIOME_IDS.map((b): [BiomeId, string] => [b, biomeLabel(b).toUpperCase()]),
+    ) as Record<BiomeId, string>;
+    panel.appendChild(this.cycle(
+      tr('screens.customBattle.biome', 'Biome'), cfg.biome, BIOME_IDS, biomeLabels,
+      (v) => { cfg.biome = v; },
+    ));
+
+    panel.appendChild(this.stepper(
+      tr('screens.customBattle.difficulty', 'Difficulty tier — x{mult} enemies',
+        { mult: ngDifficultyMult(cfg.difficultyTier).toFixed(2) }),
+      cfg.difficultyTier, 1, 10,
+      (v) => { cfg.difficultyTier = v; rerender(); },
+    ));
+
+    panel.appendChild(this.stepper(
+      tr('screens.customBattle.gates', 'Hive gates'), cfg.gates, 1, 6,
+      (v) => { cfg.gates = v; },
+    ));
+
+    stack.appendChild(panel);
+
+    const col = el('div', 'menu-col');
+    col.appendChild(this.button(tr('screens.customBattle.deploy', 'Deploy'), () => {
+      this.cb.onStartSkirmish(makeSkirmishLevel(cfg));
+    }));
+    col.appendChild(this.button(tr('screens.customBattle.back', 'Back'), () => this.showTitle(progress), 'btn ghost'));
+    stack.appendChild(col);
+
+    s.appendChild(stack);
+    this.open('customBattle', s);
+  }
+
+  /* ====================================================================== */
   /* Achievements                                                            */
   /* ====================================================================== */
 
-  showAchievements(progress: Progress, backTo: 'title' | 'pause' = 'title') {
+  showAchievements(progress: Progress, backTo: 'title' | 'pause' = 'title', game?: Game) {
     const s = el('div', 'screen opaque');
     const stack = el('div', 'stack');
     stack.appendChild(el('h2', undefined, tr('screens.achievements.heading', 'Achievements')));
@@ -551,7 +706,7 @@ export class Screens {
     wrap.appendChild(grid);
     stack.appendChild(wrap);
     stack.appendChild(this.button(tr('screens.achievements.back', 'Back'), () => {
-      if (backTo === 'pause') this.showPause(progress, true);
+      if (backTo === 'pause' && game) this.showPause(game, true);
       else this.showTitle(progress);
     }, 'btn ghost'));
     s.appendChild(stack);
@@ -611,28 +766,6 @@ export class Screens {
       return wrap;
     };
 
-    const cycle = <T extends string>(
-      label: string, value: T, options: readonly T[], labels: Record<T, string>,
-      onChange: (v: T) => void,
-    ) => {
-      const row = el('div', 'row');
-      row.style.justifyContent = 'space-between';
-      row.appendChild(el('div', 'label', label));
-      const b = el('button', 'btn ghost', labels[value]);
-      b.style.padding = '6px 18px';
-      b.style.minWidth = '120px';
-      b.addEventListener('click', () => {
-        const i = (options.indexOf(value) + 1) % options.length;
-        value = options[i];
-        b.textContent = labels[value];
-        onChange(value);
-        audio.play('uiClick');
-        this.cb.onSettingChange();
-      });
-      row.appendChild(b);
-      return row;
-    };
-
     const toggle = (label: string, value: boolean, onChange: (v: boolean) => void) => {
       const row = el('div', 'row');
       row.style.justifyContent = 'space-between';
@@ -655,11 +788,12 @@ export class Screens {
       [['auto', tr('screens.settings.auto', 'AUTO')] as const,
         ...LOCALES.map((l): [LocaleCode, string] => [l.code, l.label.toUpperCase()])],
     ) as Record<'auto' | LocaleCode, string>;
-    panel.appendChild(cycle(
+    panel.appendChild(this.cycle(
       tr('screens.settings.language', 'Language'), st.locale, ['auto', ...localeOptions] as const, localeLabels,
       (v) => {
         st.locale = v;
         setLocale(v === 'auto' ? detectLocale() : v);
+        this.cb.onSettingChange();
         // Every label on this very screen needs to redraw in the new language.
         this.showSettings(progress);
       },
@@ -685,16 +819,16 @@ export class Screens {
     panel.appendChild(divider);
     panel.appendChild(el('div', 'label', tr('screens.settings.controlsPerformance', 'controls & performance')));
 
-    panel.appendChild(cycle(
+    panel.appendChild(this.cycle(
       tr('screens.settings.controlScheme', 'Control scheme'), st.controls, ['auto', 'touch', 'desktop'] as const,
       {
         auto: tr('screens.settings.auto', 'AUTO'),
         touch: tr('screens.settings.controlSchemeTouch', 'TOUCH'),
         desktop: tr('screens.settings.controlSchemeDesktop', 'MOUSE + KEYS'),
       },
-      (v) => { st.controls = v; },
+      (v) => { st.controls = v; this.cb.onSettingChange(); },
     ));
-    panel.appendChild(cycle(
+    panel.appendChild(this.cycle(
       tr('screens.settings.renderQuality', 'Render quality'), st.quality, ['auto', 'low', 'medium', 'high'] as const,
       {
         auto: tr('screens.settings.auto', 'AUTO'),
@@ -702,7 +836,7 @@ export class Screens {
         medium: tr('screens.settings.qualityMedium', 'MEDIUM'),
         high: tr('screens.settings.qualityHigh', 'HIGH'),
       },
-      (v) => { st.quality = v; },
+      (v) => { st.quality = v; this.cb.onSettingChange(); },
     ));
     panel.appendChild(slider(tr('screens.settings.uiScale', 'Interface scale'), st.uiScale, 0.8, 1.6, 0.1,
       (v) => { st.uiScale = v; }));
@@ -796,13 +930,16 @@ export class Screens {
   /* Pause                                                                   */
   /* ====================================================================== */
 
-  showPause(progress: Progress, canSave = false) {
+  showPause(game: Game, canSave = false) {
+    const progress = game.progress;
     const s = el('div', 'screen');
     const stack = el('div', 'stack');
     stack.appendChild(el('h2', undefined, tr('screens.pause.heading', 'Paused')));
     const col = el('div', 'menu-col');
     col.appendChild(this.button(tr('screens.pause.resume', 'Resume'), () => { this.close(); this.cb.onResume(); }));
-    col.appendChild(this.button(tr('screens.pause.achievements', 'Achievements'), () => this.showAchievements(progress, 'pause'), 'btn ghost'));
+    col.appendChild(this.button(tr('screens.pause.loadout', 'Loadout'),
+      () => this.showLoadout(game, () => this.showPause(game, canSave)), 'btn ghost'));
+    col.appendChild(this.button(tr('screens.pause.achievements', 'Achievements'), () => this.showAchievements(progress, 'pause', game), 'btn ghost'));
     col.appendChild(this.button(tr('screens.pause.settings', 'Settings'), () => this.showSettings(progress), 'btn ghost'));
     col.appendChild(this.button(tr('screens.pause.restartSector', 'Restart sector'), () => {
       if (confirm(tr('screens.pause.restartConfirm', 'Restart this sector from wave 1?'))) this.cb.onRestart();
@@ -823,6 +960,110 @@ export class Screens {
         ? tr('screens.pause.hintCanSave', 'ESC to resume · the run auto-saves at the start of every build phase')
         : tr('screens.pause.hintCannotSave', 'ESC to resume · saving is available during build phases')));
     this.open('pause', s);
+  }
+
+  /* ====================================================================== */
+  /* Loadout — essence-bought weapons and armor, mid-run                    */
+  /* ====================================================================== */
+
+  showLoadout(game: Game, onClose: () => void) {
+    const s = el('div', 'screen opaque');
+    const stack = el('div', 'stack');
+    stack.appendChild(el('h2', undefined, tr('screens.loadout.heading', 'Loadout')));
+    stack.appendChild(el('p', 'flavor',
+      tr('screens.loadout.intro',
+        'Essence spent here buys weapons and armor for your chassis — it carries between sectors in ' +
+        'this campaign attempt, same as tech, but it is not a permanent unlock like the Armoury.')));
+
+    const wallet = el('div', 'relic-bar');
+    const amount = el('div', 'amount');
+    wallet.appendChild(amount);
+    stack.appendChild(wallet);
+
+    const rows: (() => void)[] = [];
+    const refreshWallet = () => {
+      amount.textContent = tr('screens.loadout.essence', '{essence} ✦', { essence: Math.round(game.essence) });
+    };
+
+    stack.appendChild(el('h4', undefined, tr('screens.loadout.weapons', 'Weapons')));
+    const wgrid = el('div', 'shop-grid');
+    for (const kind of WEAPON_KINDS) {
+      const w = WEAPONS[kind];
+      const card = el('div', 'up');
+      card.appendChild(el('div', 'icon', w.glyph));
+      const body = el('div', 'body');
+      body.appendChild(el('div', 'name', weaponName(w)));
+      body.appendChild(el('div', 'desc', weaponDesc(w)));
+      card.appendChild(body);
+      const buy = el('button', 'buy');
+      card.appendChild(buy);
+
+      const refresh = () => {
+        const owned = game.player.weaponsOwned.has(kind);
+        const equipped = game.player.weapon === kind;
+        card.className = `up${equipped ? ' maxed' : owned || game.essence >= w.cost ? ' affordable' : ''}`;
+        buy.disabled = equipped;
+        buy.textContent = equipped
+          ? tr('screens.loadout.equipped', 'EQUIPPED')
+          : owned
+            ? tr('screens.loadout.equip', 'EQUIP')
+            : tr('screens.loadout.costButton', '{cost} ✦', { cost: w.cost });
+      };
+      rows.push(refresh);
+
+      buy.addEventListener('click', () => {
+        if (!game.buyWeapon(kind)) { audio.play('error'); return; }
+        refreshWallet();
+        for (const r of rows) r();
+      });
+      buy.addEventListener('pointerenter', () => audio.play('uiHover'));
+      wgrid.appendChild(card);
+    }
+    stack.appendChild(wgrid);
+
+    stack.appendChild(el('h4', undefined, tr('screens.loadout.armor', 'Armor')));
+    const agrid = el('div', 'shop-grid');
+    // Tier 0 (unarmoured) is the free starting state — nothing to buy, so it
+    // is not offered as a card; owning nothing already means "worn: none."
+    for (const a of ARMOR_TIERS.slice(1)) {
+      const card = el('div', 'up');
+      card.appendChild(el('div', 'icon', '⛨'));
+      const body = el('div', 'body');
+      body.appendChild(el('div', 'name', armorTierName(a)));
+      body.appendChild(el('div', 'desc', tr('screens.loadout.armorHp', '+{hp} max HP', { hp: a.hpBonus })));
+      card.appendChild(body);
+      const buy = el('button', 'buy');
+      card.appendChild(buy);
+
+      const refresh = () => {
+        const owned = game.player.armorTier >= a.tier;
+        const isNext = game.player.armorTier === a.tier - 1;
+        card.className = `up${owned ? ' maxed' : isNext && game.essence >= a.cost ? ' affordable' : ''}`;
+        buy.disabled = owned || !isNext;
+        buy.textContent = owned
+          ? tr('screens.loadout.worn', 'WORN')
+          : isNext
+            ? tr('screens.loadout.costButton', '{cost} ✦', { cost: a.cost })
+            : tr('screens.loadout.locked', 'LOCKED');
+      };
+      rows.push(refresh);
+
+      buy.addEventListener('click', () => {
+        if (game.player.armorTier !== a.tier - 1 || !game.buyArmorTier()) { audio.play('error'); return; }
+        refreshWallet();
+        for (const r of rows) r();
+      });
+      buy.addEventListener('pointerenter', () => audio.play('uiHover'));
+      agrid.appendChild(card);
+    }
+    stack.appendChild(agrid);
+
+    refreshWallet();
+    for (const r of rows) r();
+
+    stack.appendChild(this.button(tr('screens.loadout.close', 'Close'), () => { this.close(); onClose(); }, 'btn ghost'));
+    s.appendChild(stack);
+    this.open('loadout', s);
   }
 
   /* ====================================================================== */
@@ -939,25 +1180,33 @@ export class Screens {
 
   showVictory(game: Game, isFinalSector: boolean) {
     const sum = game.summary();
+    const skirmish = game.mode === 'skirmish';
     const s = el('div', 'screen opaque');
     const stack = el('div', 'stack');
 
-    stack.appendChild(el('p', 'subtitle', isFinalSector
-      ? tr('screens.victory.subtitleCampaign', 'campaign complete')
-      : tr('screens.victory.subtitleSector', 'sector secured')));
-    const h = el('h2', undefined, isFinalSector
-      ? tr('screens.victory.titleCampaign', 'The Hive Is Silent')
-      : tr('screens.victory.titleSector', 'Sector Secured'));
+    stack.appendChild(el('p', 'subtitle', skirmish
+      ? tr('screens.victory.subtitleSkirmish', 'custom battle cleared')
+      : isFinalSector
+        ? tr('screens.victory.subtitleCampaign', 'campaign complete')
+        : tr('screens.victory.subtitleSector', 'sector secured')));
+    const h = el('h2', undefined, skirmish
+      ? tr('screens.victory.titleSkirmish', 'Battle Won')
+      : isFinalSector
+        ? tr('screens.victory.titleCampaign', 'The Hive Is Silent')
+        : tr('screens.victory.titleSector', 'Sector Secured'));
     h.style.color = 'var(--good)';
     stack.appendChild(h);
-    stack.appendChild(el('p', 'flavor', isFinalSector
-      ? tr('screens.victory.flavorCampaign',
-        'The World-Eater is scrap and the throat is collapsing behind you. Every achievement you earned ' +
-        'is permanent — start again and you will start stronger.')
-      : tr('screens.victory.flavorSector', '{level} is clear. Your tech and unlocks carry forward.',
-        { level: levelName(sum.level) })));
+    stack.appendChild(el('p', 'flavor', skirmish
+      ? tr('screens.victory.flavorSkirmish',
+        'Your configuration held. No campaign progress rides on this one — just the relics you earned.')
+      : isFinalSector
+        ? tr('screens.victory.flavorCampaign',
+          'The World-Eater is scrap and the throat is collapsing behind you. Every achievement you earned ' +
+          'is permanent — start again and you will start stronger.')
+        : tr('screens.victory.flavorSector', '{level} is clear. Your tech and unlocks carry forward.',
+          { level: levelName(sum.level) })));
 
-    if (!isFinalSector) {
+    if (!isFinalSector && !skirmish) {
       const nextLv = LEVELS[Math.min(LEVELS.length - 1, sum.level.id + 1)];
       const saved = el('p', 'flavor');
       saved.style.color = 'var(--good)';
@@ -1009,8 +1258,11 @@ export class Screens {
     }
 
     const col = el('div', 'menu-col');
-    if (!isFinalSector) {
+    if (!isFinalSector && !skirmish) {
       col.appendChild(this.button(tr('screens.victory.advance', 'Advance to next sector'), () => this.cb.onNextLevel()));
+    }
+    if (skirmish) {
+      col.appendChild(this.button(tr('screens.victory.battleAgain', 'Battle again'), () => this.cb.onRestart()));
     }
     col.appendChild(this.button(tr('screens.victory.returnToTitle', 'Return to title'), () => this.cb.onQuitToTitle(), 'btn ghost'));
     stack.appendChild(col);
@@ -1083,7 +1335,11 @@ export class Screens {
 
     const col = el('div', 'menu-col');
     col.appendChild(this.button(
-      endless ? tr('screens.defeat.runAgain', 'Run it again') : tr('screens.defeat.retrySector', 'Retry sector'),
+      endless
+        ? tr('screens.defeat.runAgain', 'Run it again')
+        : game.mode === 'skirmish'
+          ? tr('screens.defeat.retryBattle', 'Retry battle')
+          : tr('screens.defeat.retrySector', 'Retry sector'),
       () => this.cb.onRestart(),
     ));
     col.appendChild(this.button(tr('screens.defeat.returnToTitle', 'Return to title'), () => this.cb.onQuitToTitle(), 'btn ghost'));
