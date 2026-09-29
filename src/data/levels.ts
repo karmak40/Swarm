@@ -25,6 +25,8 @@ export interface Palette {
   /** Signature accent for this biome. */
   accent: number;
   oreColor: number;
+  /** Hazard tile fill/glow — see Tile.Hazard in world.ts. */
+  hazardColor: number;
 }
 
 export interface LevelDef {
@@ -48,6 +50,8 @@ export interface LevelDef {
   rockDensity: number;
   oreNodes: number;
   richNodes: number;
+  /** Number of hazard-tile pools sprinkled onto the map — see Tile.Hazard. */
+  hazardPools: number;
   spawnPoints: number;
   /** Seconds of build time before wave 1 and between waves. */
   prepTime: number;
@@ -67,48 +71,53 @@ export const PALETTES: Record<string, Palette> = {
     ground0: 0x24222c, ground1: 0x312d3a,
     rock: 0x171520, rockLit: 0x4a4358,
     grid: 0x3a3448, fog: 0x0d0b12,
-    accent: 0xff8a5c, oreColor: 0x7fd9ff,
+    accent: 0xff8a5c, oreColor: 0x7fd9ff, hazardColor: 0xff5a1e,
   },
   jungle: {
     void0: 0x040a08, void1: 0x0b1712,
     ground0: 0x16281f, ground1: 0x1f3a2b,
     rock: 0x0d1a14, rockLit: 0x2f5c42,
     grid: 0x2c5540, fog: 0x081310,
-    accent: 0x7dffa8, oreColor: 0x9ff0ff,
+    accent: 0x7dffa8, oreColor: 0x9ff0ff, hazardColor: 0x8aff3c,
   },
   ice: {
     void0: 0x040810, void1: 0x0a1524,
     ground0: 0x152437, ground1: 0x1e3550,
     rock: 0x0c1626, rockLit: 0x3a6494,
     grid: 0x2f5680, fog: 0x081220,
-    accent: 0x7fd9ff, oreColor: 0xc0f0ff,
+    accent: 0x7fd9ff, oreColor: 0xc0f0ff, hazardColor: 0x5fd0ff,
   },
   desert: {
     void0: 0x100a06, void1: 0x1e150c,
     ground0: 0x3a2d1c, ground1: 0x4e3d27,
     rock: 0x241a10, rockLit: 0x6e5533,
     grid: 0x5c4830, fog: 0x150e08,
-    accent: 0xffc44d, oreColor: 0x8fe8ff,
+    accent: 0xffc44d, oreColor: 0x8fe8ff, hazardColor: 0xffb347,
   },
   blood: {
     void0: 0x0e0407, void1: 0x1c070e,
     ground0: 0x2e1119, ground1: 0x421823,
     rock: 0x1a070d, rockLit: 0x6b2436,
     grid: 0x5c2030, fog: 0x120509,
-    accent: 0xff5b7d, oreColor: 0xffb0c4,
+    accent: 0xff5b7d, oreColor: 0xffb0c4, hazardColor: 0xff2e6b,
   },
   void: {
     void0: 0x07040e, void1: 0x120a24,
     ground0: 0x1d1436, ground1: 0x281c4a,
     rock: 0x120a24, rockLit: 0x4a2f80,
     grid: 0x513a8c, fog: 0x0c0618,
-    accent: 0xc48fff, oreColor: 0xd4b0ff,
+    accent: 0xc48fff, oreColor: 0xd4b0ff, hazardColor: 0xb060ff,
   },
 };
 
 /** Terrain density that made each biome feel distinct — reused for skirmish maps. */
 const BIOME_ROCK_DENSITY: Record<string, number> = {
   ash: 0.16, jungle: 0.22, ice: 0.27, desert: 0.12, blood: 0.2, void: 0.18,
+};
+
+/** Hazard-pool density per biome — reused for skirmish maps, scaled by area there. */
+const BIOME_HAZARD_DENSITY: Record<string, number> = {
+  ash: 0.6, jungle: 0.8, ice: 1.0, desert: 1.2, blood: 1.4, void: 1.8,
 };
 
 export const BIOME_IDS = ['ash', 'jungle', 'ice', 'desert', 'blood', 'void'] as const;
@@ -137,7 +146,7 @@ export const LEVELS: LevelDef[] = [
     difficulty: 1,
     startOre: 220, startEssence: 0,
     unlocked: ['wall', 'turret', 'generator', 'extractor'],
-    rockDensity: 0.16, oreNodes: 14, richNodes: 2, spawnPoints: 2,
+    rockDensity: 0.16, oreNodes: 14, richNodes: 2, hazardPools: 2, spawnPoints: 2,
     prepTime: 60, buildTime: 22,
     palette: PALETTES.ash,
     briefing: 'A dead volcanic pan. The hive has not noticed us yet. Sink an extractor, ring the core with autoguns, and learn the rhythm before the Tyrant wakes.',
@@ -155,7 +164,7 @@ export const LEVELS: LevelDef[] = [
     difficulty: 1.28,
     startOre: 260, startEssence: 30,
     unlocked: ['wall', 'turret', 'generator', 'extractor', 'dronebay', 'flak', 'pulselaser'],
-    rockDensity: 0.22, oreNodes: 16, richNodes: 3, spawnPoints: 3,
+    rockDensity: 0.22, oreNodes: 16, richNodes: 3, hazardPools: 3, spawnPoints: 3,
     prepTime: 55, buildTime: 24,
     palette: PALETTES.jungle,
     briefing: 'Fungal overgrowth, and the first fliers. Walls mean nothing to a Void Moth — put flak up early or the Devourer will arrive to an undefended core.',
@@ -174,7 +183,7 @@ export const LEVELS: LevelDef[] = [
     startOre: 300, startEssence: 60,
     unlocked: ['wall', 'turret', 'generator', 'extractor', 'dronebay', 'flak', 'pulselaser',
       'cannon', 'tesla', 'rocket'],
-    rockDensity: 0.27, oreNodes: 18, richNodes: 4, spawnPoints: 3,
+    rockDensity: 0.27, oreNodes: 18, richNodes: 4, hazardPools: 4, spawnPoints: 3,
     prepTime: 55, buildTime: 26,
     palette: PALETTES.ice,
     briefing: 'Burrowers use the ice tunnels to bypass anything you build. Layered defence, not a single wall — and watch the Matriarch\'s shield timing.',
@@ -193,7 +202,7 @@ export const LEVELS: LevelDef[] = [
     startOre: 340, startEssence: 90,
     unlocked: ['wall', 'turret', 'generator', 'extractor', 'dronebay', 'flak', 'pulselaser',
       'cannon', 'tesla', 'rocket', 'mortar'],
-    rockDensity: 0.12, oreNodes: 20, richNodes: 5, spawnPoints: 4,
+    rockDensity: 0.12, oreNodes: 20, richNodes: 5, hazardPools: 5, spawnPoints: 4,
     prepTime: 50, buildTime: 26,
     palette: PALETTES.desert,
     briefing: 'Almost no cover and four spawn gates. You will not out-wall this one — build kill zones with mortars and keep the reactors far from the front.',
@@ -212,7 +221,7 @@ export const LEVELS: LevelDef[] = [
     startOre: 380, startEssence: 130,
     unlocked: ['wall', 'turret', 'generator', 'extractor', 'dronebay', 'flak', 'pulselaser',
       'cannon', 'tesla', 'rocket', 'mortar', 'laser', 'repairbay'],
-    rockDensity: 0.2, oreNodes: 20, richNodes: 6, spawnPoints: 4,
+    rockDensity: 0.2, oreNodes: 20, richNodes: 6, hazardPools: 6, spawnPoints: 4,
     prepTime: 50, buildTime: 28,
     palette: PALETTES.blood,
     briefing: 'Shamans are here. They regenerate everything around them faster than an autogun can chew through it — snipe the support or nothing else lands.',
@@ -231,7 +240,7 @@ export const LEVELS: LevelDef[] = [
     startOre: 450, startEssence: 200,
     unlocked: ['wall', 'turret', 'generator', 'extractor', 'dronebay', 'rocket', 'cannon',
       'tesla', 'flak', 'pulselaser', 'laser', 'mortar', 'repairbay', 'shield', 'forcefield'],
-    rockDensity: 0.18, oreNodes: 22, richNodes: 8, spawnPoints: 5,
+    rockDensity: 0.18, oreNodes: 22, richNodes: 8, hazardPools: 8, spawnPoints: 5,
     prepTime: 60, buildTime: 28,
     palette: PALETTES.void,
     briefing: 'Where it all comes from. Five gates, no mercy, and the World-Eater at the end of it. Everything you have unlocked, you will need.',
@@ -328,6 +337,7 @@ export function makeSkirmishLevel(cfg: SkirmishConfig): LevelDef {
     rockDensity: BIOME_ROCK_DENSITY[cfg.biome] ?? 0.2,
     oreNodes: Math.round(area / 380),
     richNodes: Math.round(area / 1400),
+    hazardPools: Math.round((area / 2200) * (BIOME_HAZARD_DENSITY[cfg.biome] ?? 1)),
     spawnPoints: gates,
     prepTime: 55, buildTime: 26,
     palette: PALETTES[cfg.biome],

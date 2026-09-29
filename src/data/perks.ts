@@ -17,6 +17,12 @@ export interface Perks {
   playerMaxHp: number;
   playerSpeed: number;
   playerRegen: number;      // hp/sec
+  /** Dash cooldown multiplier, lower is better — see PlayerSystem's dash trigger. */
+  dashCooldown: number;
+  /** Bonus i-frame seconds tacked onto the dash's base invulnerability floor. */
+  dashInvuln: number;
+  /** Flat damage dealt to anything the dash touches; 0 means the ram check is skipped entirely. */
+  dashRamDamage: number;
   /** Economy. */
   miningSpeed: number;
   oreYield: number;
@@ -50,6 +56,7 @@ export function basePerks(): Perks {
   return {
     turretDamage: 1, turretFireRate: 1, turretRange: 1,
     playerDamage: 1, playerFireRate: 1, playerMaxHp: 1, playerSpeed: 1, playerRegen: 0,
+    dashCooldown: 1, dashInvuln: 0, dashRamDamage: 0,
     miningSpeed: 1, oreYield: 1, essenceYield: 1, buildCost: 1, sellRefund: 1, extractorRate: 1,
     structureHp: 1, coreHp: 1, coreRegen: 0, powerOutput: 1, repairRate: 1, buildSpeed: 1,
     startOre: 0, startEssence: 0, pickupRadius: 1, techChoices: 3,
@@ -63,6 +70,7 @@ export type PerkDelta = Partial<Perks>;
 const ADDITIVE = new Set<keyof Perks>([
   'playerRegen', 'coreRegen', 'startOre', 'startEssence',
   'techChoices', 'revives', 'luck', 'splashEcho', 'armorShred',
+  'dashInvuln', 'dashRamDamage',
 ]);
 
 export function applyPerk(target: Perks, delta: PerkDelta) {
@@ -82,7 +90,7 @@ const FIELD_LABEL: Record<string, string> = {
   essenceYield: 'essence yield', buildCost: 'build cost', sellRefund: 'sell refund',
   extractorRate: 'extractor rate', structureHp: 'structure HP', coreHp: 'core HP',
   powerOutput: 'power output', repairRate: 'repair rate', buildSpeed: 'build speed',
-  pickupRadius: 'pickup radius',
+  pickupRadius: 'pickup radius', dashCooldown: 'dash cooldown',
 };
 
 /** Human-readable one-liner for a delta, used on cards and achievement rows. */
@@ -104,6 +112,10 @@ export function describePerk(delta: PerkDelta): string {
     else if (k === 'luck') parts.push(t('perk.luck', '+{v}% bonus drops', { v: Math.round(v * 100) }));
     else if (k === 'splashEcho') parts.push(t('perk.splashEcho', '{v}% splash echo', { v: Math.round(v * 100) }));
     else if (k === 'armorShred') parts.push(t('perk.armorShred', '+{v} armour shred', { v }));
+    else if (k === 'dashInvuln') {
+      parts.push(t('perk.dashInvuln', '+{v}ms dash invulnerability', { v: Math.round(v * 1000) }));
+    }
+    else if (k === 'dashRamDamage') parts.push(t('perk.dashRamDamage', '+{v} dash contact damage', { v }));
     else {
       const key = k as string;
       const label = t(`perk.field.${key}`, FIELD_LABEL[key] ?? key);

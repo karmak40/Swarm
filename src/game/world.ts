@@ -22,7 +22,15 @@ export const enum Tile {
   Rock = 1,
   Ore = 2,
   RichOre = 3,
+  /** Walkable but dangerous — see World.placeHazards / HAZARD_DPS. */
+  Hazard = 4,
 }
+
+/** Damage per second to anything standing on a Hazard tile. Flat — no perk scaling. */
+export const HAZARD_DPS = 22;
+/** Path cost for a Hazard tile — expensive enough that a swarm routes around it
+ *  when a clear alternative exists, cheap next to a wall's 22-34 (never a hard block). */
+const HAZARD_PATH_COST = 6;
 
 export interface OreNode {
   tx: number;
@@ -179,6 +187,9 @@ export class World {
     // 6. Sprinkle ore seams, biased away from the core so mining costs time.
     this.placeOre();
 
+    // 6b. Sprinkle hazard pools — never on rock/ore, kept off the plaza and gates.
+    this.placeHazards();
+
     // 7. Prime the pathing field.
     this.rebuildCosts();
     this.field.setGoals([this.idx(this.coreTx, this.coreTy)]);
@@ -307,6 +318,46 @@ export class World {
     }
   }
 
+  /**
+   * Stamps `hazardPools` small blobs of `Tile.Hazard` onto plain ground —
+   * never rock, never an ore seam, and clear of the core plaza and every
+   * gate mouth so a spawn never opens directly into fire.
+   */
+  private placeHazards() {
+    const { rng, w, h } = this;
+    const wanted = this.def.hazardPools;
+    if (!wanted) return;
+    let placed = 0, guard = 0;
+
+    while (placed < wanted && guard++ < 4000) {
+      const tx = rng.int(4, w - 5);
+      const ty = rng.int(4, h - 5);
+      if (this.tileAt(tx, ty) !== Tile.Ground) continue;
+      if (dist(tx, ty, this.coreTx, this.coreTy) < 10) continue; // keep the plaza safe
+      let tooCloseToGate = false;
+      for (const s of this.spawns) {
+        if (dist(tx, ty, s.tx, s.ty) < 6) { tooCloseToGate = true; break; }
+      }
+      if (tooCloseToGate) continue;
+
+      this.stampHazard(tx, ty, rng.range(1.2, 2.4));
+      placed++;
+    }
+  }
+
+  private stampHazard(cx: number, cy: number, r: number) {
+    const r2 = r * r;
+    for (let y = Math.floor(cy - r); y <= Math.ceil(cy + r); y++) {
+      for (let x = Math.floor(cx - r); x <= Math.ceil(cx + r); x++) {
+        if (!this.inBounds(x, y)) continue;
+        // Only ever paints over plain ground — rock stays solid, ore stays minable.
+        if (this.tileAt(x, y) !== Tile.Ground) continue;
+        const dx = x - cx, dy = y - cy;
+        if (dx * dx + dy * dy <= r2) this.tiles[this.idx(x, y)] = Tile.Hazard;
+      }
+    }
+  }
+
   /* ---------------------------------------------------------------------- */
   /* Pathing costs                                                           */
   /* ---------------------------------------------------------------------- */
@@ -315,8 +366,11 @@ export class World {
   rebuildCosts() {
     for (let y = 0; y < this.h; y++) {
       for (let x = 0; x < this.w; x++) {
-        const solid = this.tiles[this.idx(x, y)] === Tile.Rock;
-        this.field.setCost(x, y, solid ? FlowField.IMPASSABLE : 1);
+        const tile = this.tiles[this.idx(x, y)];
+        const cost = tile === Tile.Rock ? FlowField.IMPASSABLE
+          : tile === Tile.Hazard ? HAZARD_PATH_COST
+          : 1;
+        this.field.setCost(x, y, cost);
       }
     }
   }

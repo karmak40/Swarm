@@ -17,7 +17,26 @@ Proprietary, unreleased. See [LICENSE](LICENSE) — all rights reserved.
 | --- | --- | --- |
 | Web | plain browser build (`vite build`) | active |
 | Desktop | Electron, packaged with `electron-builder` (Windows/macOS/Linux) | active — primary release target (Steam) |
-| Mobile | Capacitor (Android/iOS) | paused — touch controls need UX work before release |
+| Mobile | Capacitor (Android/iOS) | in progress — portrait touch controls reworked; needs on-device testing before release |
+
+### Touch controls
+
+Phones play in portrait. Aiming is automatic, so the right thumb only makes
+decisions:
+
+- **Move** — drag on the lower-left; **Dash / Build / Start / ✓** stack in a
+  column on the right edge (`core/touch.ts`, `render/touchHud.ts`).
+- **Build** — pick from the drawer (hold a slot for details), tap the map to
+  aim the ghost, then **✓** to place; walls go down on tap. While building,
+  dragging the map pans the camera; **pinch** zooms at any time.
+- **Manage** — long-press a structure for repair / targeting / sell (sell asks
+  twice).
+- The view auto-fits ~24 tiles across the short side; off-screen enemies and
+  structures under attack get edge arrows.
+- First-time players are taught in context by `render/coach.ts` (one tip at a
+  time, each shown once); the full reference is *How to play* in the pause menu.
+- 'Auto' graphics quality steps down if the frame rate stays low
+  (`core/autoQuality.ts`).
 
 ## Getting started
 
@@ -61,7 +80,7 @@ src/
   core/     input, audio, save/load, i18n, platform detection
   engine/   generic bits with no game knowledge — particles, flow-field pathing, spatial hash
   game/     the simulation itself (Game, entities, waves, save snapshots)
-  render/   canvas drawing — world, HUD, touch HUD
+  render/   canvas drawing — world, HUD, touch HUD, touch coach
   ui/       DOM screens (menus, briefing, settings) layered over the canvas
   data/     content definitions — buildings, enemies, levels, tech, achievements
   locales/  en (inline fallback in source) + de/es/fr/ru translation tables

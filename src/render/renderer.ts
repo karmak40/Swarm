@@ -281,6 +281,23 @@ export class Renderer {
         }
       }
     }
+
+    // Hazard: dark base plus a pulsing glow — phase comes from the tile index
+    // so pools don't all throb in lockstep, no per-tile state needed.
+    const hazardBase = css(darken(pal.hazardColor, 0.55));
+    for (let ty = v.ty0; ty <= v.ty1; ty++) {
+      for (let tx = v.tx0; tx <= v.tx1; tx++) {
+        const i = w.idx(tx, ty);
+        if (w.tiles[i] !== Tile.Hazard) continue;
+        const px = tx * TILE, py = ty * TILE;
+        const pulse = 0.5 + Math.sin(game.elapsed * 2.4 + i) * 0.5;
+
+        ctx.fillStyle = hazardBase;
+        ctx.fillRect(px, py, TILE, TILE);
+        ctx.fillStyle = rgba(pal.hazardColor, 0.25 + pulse * 0.3);
+        ctx.fillRect(px + 3, py + 3, TILE - 6, TILE - 6);
+      }
+    }
   }
 
   private drawOre(

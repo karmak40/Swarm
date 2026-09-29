@@ -19,7 +19,7 @@ import type { SafeInsets } from './platform';
  * itself, which is more precise than a global mode — and a third circle does not
  * fit around the action corner on a 375px-tall screen without overlapping.
  */
-export type TouchButtonId = 'dash' | 'build' | 'pause' | 'startWave' | 'map';
+export type TouchButtonId = 'dash' | 'build' | 'pause' | 'startWave' | 'map' | 'confirm';
 
 export interface TouchButton {
   id: TouchButtonId;
@@ -48,6 +48,29 @@ interface Stick {
 /** Where the movement stick may be summoned from. */
 const STICK_ZONE_FRACTION = 0.42;
 const LONG_PRESS_MS = 420;
+/**
+ * How far above the aim point Game draws the placement ghost, in screen px.
+ * Must match the lift in `Game.updateInteraction`.
+ */
+export const GHOST_LIFT = 70;
+/** Grab radius around the ghost, in CSS px before UI scale. */
+const GHOST_GRAB_R = 44;
+
+interface PointerRec {
+  x: number;
+  y: number;
+  startX: number;
+  startY: number;
+  t: number;
+  /** 'pan': a build-mode touch off the ghost — a drag pans, a tap aims. */
+  role: 'stick' | 'button' | 'map' | 'pan' | 'pinch';
+  button?: TouchButtonId;
+  /** Aim-point offset from the finger while dragging a grabbed ghost. */
+  grabX: number;
+  grabY: number;
+  /** A 'pan' touch that has moved past the tap slop. */
+  panning?: boolean;
+}
 const TAP_SLOP = 14;
 
 export class TouchInput implements InputSource {
@@ -71,6 +94,14 @@ export class TouchInput implements InputSource {
   drawerOpen = false;
   /** Non-null while a structure is selected and awaiting placement. */
   placing = false;
+  /**
+   * Placement needs the ✓ button rather than landing on touch.
+   *
+   * Set for everything except drag-painted structures (walls): a single
+   * mis-tap on an expensive turret is a costly mistake, while a wall line is
+   * exactly what the drag is for. Touching the map then only aims the ghost.
+   */
+  confirmPlacement = false;
 
   /** A map tap that the game should treat as a click, in screen space. */
   mapTap: { x: number; y: number } | null = null;
@@ -81,11 +112,18 @@ export class TouchInput implements InputSource {
 
   southpaw = false;
   scale = 1;
-  private insets: SafeInsets = { top: 0, right: 0, bottom: 0, left: 0 };
+  /** Safe-area insets from the last layout; read by TouchHud for edge readouts. */
+  insets: SafeInsets = { top: 0, right: 0, bottom: 0, left: 0 };
 
   private w = 0;
   private h = 0;
-  private pointers = new Map<number, { x: number; y: number; startX: number; startY: number; t: number; role: 'stick' | 'button' | 'map'; button?: TouchButtonId }>();
+  private pointers = new Map<number, PointerRec>();
+  /** Accumulated build-mode pan drag, in screen px; see consumePan. */
+  private panX = 0;
+  private panY = 0;
+  /** Two-finger zoom: finger spacing last frame, and the pending scale factor. */
+  private pinchDist = 0;
+  private pinchFactor = 1;
   private pressedButtons = new Set<TouchButtonId>();
   private longPressTimer: number | undefined;
   private el: HTMLElement;
@@ -134,18 +172,36 @@ export class TouchInput implements InputSource {
 
     this.stick.radius = Math.round(74 * s);
 
+    const buildR = Math.round(r * 1.05);
+    const startR = Math.round(r * 0.9);
+    // Room between stacked circles for the label drawn under each one.
+    const labelGap = Math.round(28 * s);
+
+    // Landscape: Build sits inward of Dash along the bottom edge. Portrait:
+    // a phone is too narrow for that — at ~360px wide (or a larger UI scale)
+    // Build reaches into the movement-stick zone on the other half — so the
+    // cluster becomes a column hugging the outer edge instead.
+    const column = h > w;
+    const buildX = column ? actionX : actionX + dir * (r * 2.6);
+    const buildY = column ? baseY - r - buildR - labelGap : baseY;
+    // START and ✓ share one slot above Build (never visible together): on a
+    // ~375px-wide phone a bottom-centre START lands inside Build's circle.
+    const slotY = buildY - buildR - startR - labelGap;
+
     this.buttons = [
       { id: 'dash', x: actionX, y: baseY, r, tapped: false, held: false, visible: true, enabled: true },
       {
-        // Inward along the bottom edge. Spacing is set so the two circles clear
-        // each other and neither reaches the minimap above.
-        id: 'build', x: actionX + dir * (r * 2.6), y: baseY,
-        r: Math.round(r * 1.05), tapped: false, held: false, visible: true, enabled: true,
+        id: 'build', x: buildX, y: buildY,
+        r: buildR, tapped: false, held: false, visible: true, enabled: true,
       },
       {
-        // Lifted a full radius off the bottom edge so it is never clipped.
-        id: 'startWave', x: w / 2, y: h - Math.round(40 * s) - insets.bottom,
-        r: Math.round(r * 0.9), tapped: false, held: false, visible: false, enabled: true,
+        id: 'startWave', x: buildX, y: slotY,
+        r: startR, tapped: false, held: false, visible: false, enabled: true,
+      },
+      {
+        // Shares START's slot: START is hidden while a placement is pending.
+        id: 'confirm', x: buildX, y: slotY,
+        r: buildR, tapped: false, held: false, visible: false, enabled: true,
       },
       {
         id: 'pause', x: w - Math.round(30 * s) - insets.right, y: Math.round(30 * s) + insets.top,
@@ -192,43 +248,98 @@ export class TouchInput implements InputSource {
     return inX && y > this.h * 0.32;
   }
 
+  /** A quick, stationary release — a tap rather than a drag or a hold. */
+  private isTap(p: PointerRec) {
+    return Math.hypot(p.x - p.startX, p.y - p.startY) <= TAP_SLOP && Date.now() - p.t < LONG_PRESS_MS;
+  }
+
+  /**
+   * True when (x, y) is on the pending placement ghost.
+   *
+   * `mouseX/Y` is the aim point; Game draws the ghost `GHOST_LIFT` px above
+   * it so the finger doesn't cover it. Either spot counts as grabbing it.
+   */
+  private onGhost(x: number, y: number) {
+    const r = GHOST_GRAB_R * this.scale;
+    return Math.hypot(x - this.mouseX, y - (this.mouseY - GHOST_LIFT)) <= r
+      || Math.hypot(x - this.mouseX, y - this.mouseY) <= r;
+  }
+
   private onDown = (e: PointerEvent) => {
     if (this.uiCaptured) return;
     e.preventDefault();
     const { x, y } = this.local(e);
+    const rec = (role: PointerRec['role'], extra: Partial<PointerRec> = {}) => {
+      const p: PointerRec = { x, y, startX: x, startY: y, t: Date.now(), role, grabX: 0, grabY: 0, ...extra };
+      this.pointers.set(e.pointerId, p);
+      return p;
+    };
 
     const btn = this.hitButton(x, y);
     if (btn) {
       btn.tapped = true;
       btn.held = true;
       this.pressedButtons.add(btn.id);
-      this.pointers.set(e.pointerId, { x, y, startX: x, startY: y, t: Date.now(), role: 'button', button: btn.id });
+      rec('button', { button: btn.id });
       this.buzz(10);
       return;
     }
 
-    if (!this.stick.active && this.inStickZone(x, y)) {
+    // A second finger on the map turns the pair into a pinch. The first
+    // finger's gesture (mining hold, pending tap, long press, pan, ghost drag)
+    // is abandoned — two fingers down is never a tap.
+    const other = this.mapPointer();
+    if (other) {
+      clearTimeout(this.longPressTimer);
+      this.mapHeld = false;
+      other.role = 'pinch';
+      rec('pinch');
+      this.pinchDist = Math.max(1, Math.hypot(x - other.x, y - other.y));
+      return;
+    }
+
+    // In build mode the ghost wins over the stick zone: otherwise a ghost
+    // sitting in the lower-left half could never be picked up again. The grab
+    // keeps the finger's offset, so the ghost moves with it instead of
+    // jumping under the fingertip.
+    if (this.placing && this.onGhost(x, y)) {
+      rec('map', { grabX: this.mouseX - x, grabY: this.mouseY - y });
+      this.mapHeld = true;
+      return;
+    }
+
+    // Not while the build drawer is up: it spans the bottom of the screen, and
+    // in portrait its left-hand slots sit inside the stick zone — tapping them
+    // summoned the stick instead of picking the structure.
+    if (!this.stick.active && !this.drawerOpen && this.inStickZone(x, y)) {
       this.stick.active = true;
       this.stick.pointerId = e.pointerId;
       this.stick.cx = x; this.stick.cy = y;
       this.stick.tx = x; this.stick.ty = y;
-      this.pointers.set(e.pointerId, { x, y, startX: x, startY: y, t: Date.now(), role: 'stick' });
+      rec('stick');
       return;
     }
 
     // The resource readout along the very top isn't a button, but a tap there
     // shouldn't mine or place a structure underneath it either.
-    if (y < 92 * this.scale) return;
+    if (y < 92 * this.scale + this.insets.top) return;
+
+    // Build mode: a drag off the ghost looks around the map; a tap moves the
+    // ghost there (resolved on release, once we know it wasn't a drag).
+    if (this.placing) {
+      rec('pan');
+      return;
+    }
 
     // Anything else is a world interaction.
-    this.pointers.set(e.pointerId, { x, y, startX: x, startY: y, t: Date.now(), role: 'map' });
+    rec('map');
     this.mouseX = x;
     this.mouseY = y;
     this.mapHeld = true;
     clearTimeout(this.longPressTimer);
     this.longPressTimer = window.setTimeout(() => {
       const p = this.pointers.get(e.pointerId);
-      if (!p || p.role !== 'map') return;
+      if (!p || p.role !== 'map' || this.placing) return;
       // Only a stationary finger counts as a long press.
       if (Math.abs(p.x - p.startX) > TAP_SLOP || Math.abs(p.y - p.startY) > TAP_SLOP) return;
       this.mapLongPress = { x: p.x, y: p.y };
@@ -241,6 +352,7 @@ export class TouchInput implements InputSource {
     if (!p) return;
     e.preventDefault();
     const { x, y } = this.local(e);
+    const px = p.x, py = p.y;
     p.x = x; p.y = y;
 
     if (p.role === 'stick') {
@@ -257,8 +369,27 @@ export class TouchInput implements InputSource {
         this.stick.cy += (dy / d) * (d - R);
       }
     } else if (p.role === 'map') {
-      this.mouseX = x;
-      this.mouseY = y;
+      this.mouseX = x + p.grabX;
+      this.mouseY = y + p.grabY;
+    } else if (p.role === 'pinch') {
+      const pair = this.pinchPair();
+      if (pair) {
+        const d = Math.max(1, Math.hypot(pair[0].x - pair[1].x, pair[0].y - pair[1].y));
+        this.pinchFactor *= d / this.pinchDist;
+        this.pinchDist = d;
+      }
+    } else if (p.role === 'pan') {
+      // Hold still until it is clearly a drag, so a slightly wobbly tap
+      // doesn't nudge the camera.
+      if (!p.panning) {
+        if (Math.hypot(x - p.startX, y - p.startY) <= TAP_SLOP) return;
+        p.panning = true;
+        this.panX += x - p.startX;
+        this.panY += y - p.startY;
+        return;
+      }
+      this.panX += x - px;
+      this.panY += y - py;
     }
   };
 
@@ -270,6 +401,9 @@ export class TouchInput implements InputSource {
     if (p.role === 'stick') {
       this.stick.active = false;
       this.stick.pointerId = -1;
+      // While placing, a tap in the stick zone still aims — the stick owns
+      // that half of the screen, but a structure may need to go there.
+      if (this.placing && this.isTap(p)) this.tapAt(p.x, p.y);
       return;
     }
     if (p.role === 'button') {
@@ -278,16 +412,62 @@ export class TouchInput implements InputSource {
       this.pressedButtons.delete(p.button!);
       return;
     }
+    if (p.role === 'pan') {
+      if (!p.panning && this.isTap(p)) this.tapAt(p.x, p.y);
+      return;
+    }
+    // Lifting one pinch finger ends the pinch; the one left behind stays a
+    // 'pinch' pointer (inert) until it lifts too, so it can't suddenly pan,
+    // aim or tap from wherever it happens to be.
+    if (p.role === 'pinch') return;
 
     clearTimeout(this.longPressTimer);
     this.mapHeld = false;
-    const moved = Math.hypot(p.x - p.startX, p.y - p.startY);
-    const heldMs = Date.now() - p.t;
     // A quick, stationary touch is a tap; a drag is a camera-look, not a click.
-    if (moved <= TAP_SLOP && heldMs < LONG_PRESS_MS) {
+    if (this.isTap(p)) {
       this.mapTap = { x: p.x, y: p.y };
     }
   };
+
+  /**
+   * A build-mode map tap: moves the aim so the ghost lands right where the
+   * finger touched (the ghost is drawn GHOST_LIFT above the aim point).
+   */
+  private tapAt(x: number, y: number) {
+    this.mouseX = x;
+    this.mouseY = y + GHOST_LIFT;
+    this.mapTap = { x, y };
+  }
+
+  /** The live single-finger map/pan pointer a second finger would pinch with. */
+  private mapPointer(): PointerRec | null {
+    for (const p of this.pointers.values()) {
+      if (p.role === 'map' || p.role === 'pan') return p;
+    }
+    return null;
+  }
+
+  /** Both fingers of an active pinch, or null once either has lifted. */
+  private pinchPair(): [PointerRec, PointerRec] | null {
+    const ps: PointerRec[] = [];
+    for (const p of this.pointers.values()) if (p.role === 'pinch') ps.push(p);
+    return ps.length >= 2 ? [ps[0], ps[1]] : null;
+  }
+
+  /** Zoom factor from pinching since the last call (>1 = fingers apart = zoom in). */
+  consumePinch() {
+    const f = this.pinchFactor;
+    this.pinchFactor = 1;
+    return f;
+  }
+
+  /** Screen-space drag since the last call, for build-mode camera panning. */
+  consumePan() {
+    const v = { x: this.panX, y: this.panY };
+    this.panX = 0;
+    this.panY = 0;
+    return v;
+  }
 
   /* ---------------------------------------------------------------------- */
   /* InputSource                                                             */
@@ -331,14 +511,20 @@ export class TouchInput implements InputSource {
    */
   mouseDown(button = 0) {
     if (button === 2) return this.mapHeld;
+    if (this.placing && this.confirmPlacement) return button === 0 && this.confirmTapped;
     return button === 0 && this.placing && (this.mapHeld || this.mapTap !== null);
   }
 
   mouseClicked(button = 0) {
+    if (this.placing && this.confirmPlacement) return button === 0 && this.confirmTapped;
     return button === 0 && this.mapTap !== null;
   }
 
   mouseReleased() { return false; }
+
+  private get confirmTapped() {
+    return this.button('confirm')?.tapped ?? false;
+  }
 
   /** True for one frame after a long press, for the structure context menu. */
   consumeLongPress() {
@@ -367,6 +553,9 @@ export class TouchInput implements InputSource {
     this.mapHeld = false;
     this.mapTap = null;
     this.mapLongPress = null;
+    this.panX = 0;
+    this.panY = 0;
+    this.pinchFactor = 1;
     for (const b of this.buttons) { b.held = false; b.tapped = false; }
     clearTimeout(this.longPressTimer);
   }

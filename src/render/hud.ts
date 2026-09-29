@@ -1,4 +1,5 @@
 import { clamp, fmtNum, fmtTime, TAU } from '../core/math';
+import { buildingStats } from './buildingInfo';
 import { t as tr } from '../core/i18n';
 import {
   BUILDINGS, CATEGORY_KEY, buildCategoryLabel, buildingDesc, buildingName,
@@ -32,6 +33,9 @@ function targetingLabel(mode: TargetingMode): string {
  * build bar, minimap, boss bar, tooltips and the phase banner. Keeping it in
  * canvas means it shakes and flashes with the world instead of floating above it.
  */
+/** Smallest HUD font on touch, in CSS px before UI scale. */
+const TOUCH_MIN_FONT = 11;
+
 export class Hud {
   /** Build-bar hit rectangles, refreshed each frame for click routing. */
   buildSlots: { kind: BuildingKind; x: number; y: number; w: number; h: number }[] = [];
@@ -43,6 +47,33 @@ export class Hud {
   uiScale = 1;
   /** Notch/Dynamic Island/home-indicator clearance, so corner readouts clear the cutout. */
   insets: SafeInsets = { top: 0, right: 0, bottom: 0, left: 0 };
+  /** Touch, taller than wide: the top readouts stack into rows instead of sharing one. */
+  private portrait = false;
+  /** Bottom edge of the top HUD stack this frame (touch), in CSS px. */
+  topClear = 0;
+  /**
+   * Where transient touch hints (placement, mining, errors, coach) may go:
+   * below the top HUD and, in portrait, left of the minimap. Refreshed every
+   * frame; TouchHud and the coach read it rather than guessing a y offset.
+   */
+  hintArea = { left: 12, right: 363, top: 100 };
+
+  /**
+   * Font size in px. Desktop gets `px` as authored. Touch scales it with the
+   * UI-scale setting and never goes below TOUCH_MIN_FONT — 8-10 px labels are
+   * fine on a monitor at arm's length and unreadable on a phone.
+   */
+  private fs(px: number) {
+    return this.compact ? Math.round(Math.max(px, TOUCH_MIN_FONT) * this.uiScale) : px;
+  }
+
+  /** Spacing multiplier: UI scale on touch, 1 on desktop. */
+  private get k() { return this.compact ? this.uiScale : 1; }
+
+  /** Right edge of the top strip on touch: the pause/map buttons own the corner. */
+  private stripRight(w: number) {
+    return w - Math.round(62 * this.uiScale) - this.insets.right;
+  }
 
   /**
    * `measureText` result cache. Most text here is either genuinely static
@@ -68,11 +99,22 @@ export class Hud {
 
     if (this.compact) {
       // Touch: the bottom third belongs to the thumbs, so every readout moves up
-      // and the build bar is replaced by the drawer in TouchHud.
-      this.compactTopBar(ctx, game, w);
-      this.waveTracker(ctx, game, w);
-      this.minimap(ctx, game, w, h);
-      if (game.bossRef) this.bossBar(ctx, game, w);
+      // and the build bar is replaced by the drawer in TouchHud. Portrait
+      // stacks the readouts top-down; each block returns its bottom edge.
+      this.portrait = h > w;
+      let y = this.compactTopBar(ctx, game, w);
+      y = Math.max(y, this.waveTracker(ctx, game, w, this.portrait ? y : 0));
+      if (game.bossRef) y = this.bossBar(ctx, game, w, y);
+      this.topClear = y;
+      const mapLeft = this.minimap(ctx, game, w, h);
+      const s = this.uiScale;
+      this.hintArea = {
+        left: Math.round(12 * s) + this.insets.left,
+        right: this.portrait && mapLeft !== null
+          ? mapLeft - Math.round(8 * s)
+          : w - Math.round(12 * s) - this.insets.right,
+        top: y + Math.round(6 * s),
+      };
       this.banner(ctx, game, w, h);
       this.errorToast(ctx, game, w, h);
       this.debug(ctx, game, w, h, fps);
@@ -100,9 +142,11 @@ export class Hud {
    * status rail, folded into one strip. The rail cannot stay at the bottom on
    * touch: that is exactly where the movement thumb lives.
    */
-  private compactTopBar(ctx: Ctx, game: Game, w: number) {
+  private compactTopBar(ctx: Ctx, game: Game, w: number): number {
     const s = this.uiScale;
-    const { top: insetTop, right: insetRight, left: insetLeft } = this.insets;
+    const { top: insetTop, left: insetLeft } = this.insets;
+    const portrait = this.portrait;
+    const right = this.stripRight(w);
     const H = Math.round(58 * s) + insetTop;
 
     const grad = ctx.createLinearGradient(0, 0, 0, H + 10);
@@ -115,12 +159,12 @@ export class Hud {
     // the top — insets.left/right keep this strip's readouts off it.
     const pad = Math.round(14 * s) + insetLeft;
     let x = pad;
-    const row1 = Math.round(15 * s) + insetTop;
-    const row2 = Math.round(34 * s) + insetTop;
+    const row1 = Math.round(16 * s) + insetTop;
+    const row2 = Math.round(38 * s) + insetTop;
 
     // Resources on one line, glyph + value only — labels do not survive the space.
     ctx.textAlign = 'left';
-    ctx.font = `600 ${Math.round(13 * s)}px ${MONO}`;
+    ctx.font = `600 ${this.fs(13)}px ${MONO}`;
     ctx.fillStyle = css(0x7fd9ff);
     ctx.fillText(`◆${fmtNum(game.ore)}`, x, row1);
     x += this.measure(ctx, `◆${fmtNum(game.ore)}`) + Math.round(12 * s);
@@ -132,48 +176,78 @@ export class Hud {
     ctx.fillStyle = css(eff >= 1 ? 0x5cf2a0 : eff > 0.6 ? 0xffb347 : 0xff4f5e);
     ctx.fillText(`⚡${Math.round(game.power.draw)}/${Math.round(game.power.supply)}`, x, row1);
 
-    // Core + chassis bars, stacked and short.
-    const barW = Math.round(120 * s);
-    const barH = Math.round(7 * s);
-    const c = game.core;
-    ctx.fillStyle = rgba(0x000000, 0.6);
-    ctx.fillRect(pad, row2 - barH, barW, barH);
-    ctx.fillStyle = css(c.pct > 0.5 ? 0x5cf2a0 : c.pct > 0.25 ? 0xffb347 : 0xff4f5e);
-    ctx.fillRect(pad, row2 - barH, barW * c.pct, barH);
-    if (c.shield > 0 && c.maxShield > 0) {
-      ctx.fillStyle = rgba(0x9fd8ff, 0.9);
-      ctx.fillRect(pad, row2 - barH - 3, barW * clamp(c.shield / c.maxShield, 0, 1), 2);
-    }
-    ctx.font = `600 ${Math.round(8 * s)}px ${UI_FONT}`;
-    ctx.fillStyle = css(0x55667e);
-    ctx.fillText(tr('hud.compact.coreLabel', 'CORE'), pad + barW + Math.round(6 * s), row2 - barH / 2);
-
-    const p = game.player;
-    const px = pad + barW + Math.round(44 * s);
-    const pPct = clamp(p.hp / p.maxHp, 0, 1);
-    ctx.fillStyle = rgba(0x000000, 0.6);
-    ctx.fillRect(px, row2 - barH, barW * 0.7, barH);
-    ctx.fillStyle = css(pPct > 0.4 ? 0x5cf2a0 : 0xff4f5e);
-    ctx.fillRect(px, row2 - barH, barW * 0.7 * pPct, barH);
-    // Heat rides directly under the health bar it constrains.
-    ctx.fillStyle = rgba(0x000000, 0.6);
-    ctx.fillRect(px, row2 + 2, barW * 0.7, 3);
-    ctx.fillStyle = css(p.overheated ? 0xff4f5e : p.heat > 0.7 ? 0xffb347 : 0x7fd9ff);
-    ctx.fillRect(px, row2 + 2, barW * 0.7 * p.heat, 3);
-
-    // Auto-aim lock indicator: the player has no crosshair to read.
-    if (game.autoTarget) {
-      ctx.textAlign = 'left';
-      ctx.font = `600 ${Math.round(9 * s)}px ${UI_FONT}`;
-      ctx.fillStyle = css(0xff8090);
-      ctx.fillText(tr('hud.compact.locked', '◎ LOCKED'), px + barW * 0.7 + Math.round(8 * s), row2 - barH / 2);
-    }
-
     // Clock, tucked left of the pause button.
     ctx.textAlign = 'right';
-    ctx.font = `500 ${Math.round(11 * s)}px ${MONO}`;
+    ctx.font = `500 ${this.fs(11)}px ${MONO}`;
     ctx.fillStyle = css(0x8fa3c0);
-    ctx.fillText(fmtTime(game.runStats.timeSeconds), w - Math.round(62 * s) - insetRight, row1);
+    const clock = fmtTime(game.runStats.timeSeconds);
+    ctx.fillText(clock, right, row1);
+    const clockLeft = right - this.measure(ctx, clock);
+
+    // Core + chassis bars. Landscape: short, with the wave tracker centred
+    // between them and the clock. Portrait: nothing else shares the row, so
+    // they span the strip.
+    const barH = Math.round(7 * s);
+    const labelFont = `600 ${this.fs(9)}px ${UI_FONT}`;
+    ctx.font = labelFont;
+    const coreLabel = tr('hud.compact.coreLabel', 'CORE');
+    const labelW = this.measure(ctx, coreLabel);
+    const gap = Math.round(6 * s);
+    let coreX: number, coreW: number, px: number, pW: number;
+    if (portrait) {
+      coreX = pad + labelW + gap;
+      const barsW = right - coreX - Math.round(14 * s);
+      coreW = barsW * 0.58;
+      px = coreX + coreW + Math.round(14 * s);
+      pW = barsW - coreW;
+    } else {
+      coreX = pad;
+      coreW = Math.round(120 * s);
+      px = coreX + coreW + gap + labelW + Math.round(12 * s);
+      pW = coreW * 0.7;
+    }
+
+    const c = game.core;
+    ctx.fillStyle = rgba(0x000000, 0.6);
+    ctx.fillRect(coreX, row2 - barH, coreW, barH);
+    ctx.fillStyle = css(c.pct > 0.5 ? 0x5cf2a0 : c.pct > 0.25 ? 0xffb347 : 0xff4f5e);
+    ctx.fillRect(coreX, row2 - barH, coreW * c.pct, barH);
+    if (c.shield > 0 && c.maxShield > 0) {
+      ctx.fillStyle = rgba(0x9fd8ff, 0.9);
+      ctx.fillRect(coreX, row2 - barH - 3, coreW * clamp(c.shield / c.maxShield, 0, 1), 2);
+    }
+    ctx.textAlign = 'left';
+    ctx.fillStyle = css(0x55667e);
+    ctx.fillText(coreLabel, portrait ? pad : coreX + coreW + gap, row2 - barH / 2);
+
+    const p = game.player;
+    const pPct = clamp(p.hp / p.maxHp, 0, 1);
+    ctx.fillStyle = rgba(0x000000, 0.6);
+    ctx.fillRect(px, row2 - barH, pW, barH);
+    ctx.fillStyle = css(pPct > 0.4 ? 0x5cf2a0 : 0xff4f5e);
+    ctx.fillRect(px, row2 - barH, pW * pPct, barH);
+    // Heat rides directly under the health bar it constrains.
+    const heatH = Math.max(3, Math.round(3 * s));
+    ctx.fillStyle = rgba(0x000000, 0.6);
+    ctx.fillRect(px, row2 + 2, pW, heatH);
+    ctx.fillStyle = css(p.overheated ? 0xff4f5e : p.heat > 0.7 ? 0xffb347 : 0x7fd9ff);
+    ctx.fillRect(px, row2 + 2, pW * p.heat, heatH);
+
+    // Auto-aim lock indicator: the player has no crosshair to read. Portrait
+    // has no room after the bars, so it sits on the resource row by the clock.
+    if (game.autoTarget) {
+      ctx.font = labelFont;
+      ctx.fillStyle = css(0xff8090);
+      const locked = tr('hud.compact.locked', '◎ LOCKED');
+      if (portrait) {
+        ctx.textAlign = 'right';
+        ctx.fillText(locked, clockLeft - Math.round(10 * s), row1);
+      } else {
+        ctx.textAlign = 'left';
+        ctx.fillText(locked, px + pW + Math.round(8 * s), row2 - barH / 2);
+      }
+    }
+    return row2 + 2 + heatH;
   }
 
   /* ---- top resource strip ---------------------------------------------- */
@@ -245,25 +319,38 @@ export class Hud {
 
   /* ---- wave tracker ---------------------------------------------------- */
 
-  private waveTracker(ctx: Ctx, game: Game, w: number) {
-    const cx = w / 2;
-    const s = this.compact ? this.uiScale : 1;
-    const y = this.compact ? Math.round(14 * s) + this.insets.top : 66;
-    const bw = this.compact ? Math.min(w * 0.42, 260 * s) : 360;
+  /**
+   * Wave label, progress bar, pips and the countdown / hostiles line. Returns
+   * its bottom edge. `top` > 0 stacks it under the strip (portrait touch);
+   * otherwise it sits in its usual spot.
+   */
+  private waveTracker(ctx: Ctx, game: Game, w: number, top = 0): number {
+    const k = this.k;
+    const stacked = this.compact && top > 0;
+    const pad = Math.round(14 * k) + this.insets.left;
+    const right = this.stripRight(w);
+    const cx = stacked ? (pad + right) / 2 : w / 2;
+    const y = stacked ? top + Math.round(14 * k)
+      : this.compact ? Math.round(14 * k) + this.insets.top : 66;
+    const bw = stacked ? Math.min(right - pad, 260 * k)
+      : this.compact ? Math.min(w * 0.42, 260 * k) : 360;
+    // Longest line allowed; canvas squeezes a line rather than overflow past it.
+    const maxW = stacked ? right - pad : this.compact ? w * 0.6 : undefined;
 
     const isPrep = game.inBuildPhase;
     const label = isPrep ? tr('hud.wave.nextAssault', 'NEXT ASSAULT') : game.waveLabel;
     const boss = game.phase === 'boss' || game.plan?.isBoss;
 
     ctx.textAlign = 'center';
-    ctx.font = `600 12px ${UI_FONT}`;
+    ctx.font = `600 ${this.fs(12)}px ${UI_FONT}`;
     ctx.fillStyle = css(boss ? 0xff4f5e : isPrep ? 0x5cf2a0 : 0xffb347);
-    ctx.fillText(label, cx, y);
+    ctx.fillText(label, cx, y, maxW);
 
     // Bar: build countdown, or kill progress in combat.
-    const barY = y + 12;
+    const barY = y + Math.round(12 * k);
+    const barH = Math.round(8 * k);
     ctx.fillStyle = rgba(0x000000, 0.6);
-    techRect(ctx, cx - bw / 2, barY, bw, 8, 3);
+    techRect(ctx, cx - bw / 2, barY, bw, barH, 3);
     ctx.fill();
 
     let t: number;
@@ -277,19 +364,20 @@ export class Hud {
       col = boss ? 0xff4f5e : 0xffb347;
     }
     ctx.fillStyle = css(col);
-    techRect(ctx, cx - bw / 2, barY, Math.max(2, bw * t), 8, 3);
+    techRect(ctx, cx - bw / 2, barY, Math.max(2, bw * t), barH, 3);
     ctx.fill();
     ctx.strokeStyle = rgba(col, 0.4);
     ctx.lineWidth = 1;
-    techRect(ctx, cx - bw / 2, barY, bw, 8, 3);
+    techRect(ctx, cx - bw / 2, barY, bw, barH, 3);
     ctx.stroke();
 
     // Wave pips. In the campaign this is the whole level; in endless it is the
     // current run of ten waves leading up to the next boss.
-    const pipY = barY + 18;
+    const pipY = barY + Math.round(18 * k);
     const total = game.endless ? 10 : game.level.waves;
     const doneInBlock = game.endless ? game.waveIndex % 10 : game.waveIndex;
-    const pw = Math.min(16, bw / total);
+    const pw = Math.min(16 * k, bw / total);
+    const pr = 5 * k;
     for (let i = 0; i < total; i++) {
       const px = cx - (total * pw) / 2 + i * pw + pw / 2;
       const done = i < doneInBlock;
@@ -300,45 +388,55 @@ export class Hud {
         : rgba(isBossPip ? 0xff4f5e : 0xffffff, 0.18);
       if (isBossPip) {
         ctx.beginPath();
-        ctx.moveTo(px, pipY - 5);
-        ctx.lineTo(px + 4.5, pipY);
-        ctx.lineTo(px, pipY + 5);
-        ctx.lineTo(px - 4.5, pipY);
+        ctx.moveTo(px, pipY - pr);
+        ctx.lineTo(px + pr * 0.9, pipY);
+        ctx.lineTo(px, pipY + pr);
+        ctx.lineTo(px - pr * 0.9, pipY);
         ctx.closePath();
         ctx.fill();
       } else {
-        ctx.fillRect(px - pw * 0.32, pipY - 2.5, pw * 0.64, 5);
+        ctx.fillRect(px - pw * 0.32, pipY - pr / 2, pw * 0.64, pr);
       }
     }
 
-    ctx.font = `500 11px ${UI_FONT}`;
+    // Text rows under the pips, spaced for the (possibly enlarged) font.
+    const lineH = Math.max(16, this.fs(11) + 5);
+    let ty = pipY + Math.round(18 * k);
+    ctx.font = `500 ${this.fs(11)}px ${UI_FONT}`;
     ctx.fillStyle = css(0x8fa3c0);
     if (isPrep) {
+      const s = Math.ceil(game.prepRemaining);
+      // Touch has no Space key — point at the on-screen START button instead.
       ctx.fillText(
-        tr('hud.wave.prepCountdown', '{s}s   ·   SPACE to start early for bonus ore', { s: Math.ceil(game.prepRemaining) }),
-        cx, pipY + 18,
+        this.compact
+          ? tr('hud.wave.prepCountdownTouch', '{s}s   ·   ▶ START early for bonus ore', { s })
+          : tr('hud.wave.prepCountdown', '{s}s   ·   SPACE to start early for bonus ore', { s }),
+        cx, ty, maxW,
       );
       const next = game.nextPlan;
       if (next) {
-        ctx.font = `500 10px ${UI_FONT}`;
+        ty += lineH;
+        ctx.font = `500 ${this.fs(10)}px ${UI_FONT}`;
         ctx.fillStyle = css(0x55667e);
-        ctx.fillText(game.describeWave(next).toUpperCase(), cx, pipY + 34);
+        ctx.fillText(game.describeWave(next).toUpperCase(), cx, ty, maxW);
       }
     } else {
-      ctx.fillText(tr('hud.wave.hostilesRemaining', '{n} HOSTILES REMAINING', { n: game.remainingEnemies }), cx, pipY + 18);
+      ctx.fillText(tr('hud.wave.hostilesRemaining', '{n} HOSTILES REMAINING', { n: game.remainingEnemies }), cx, ty, maxW);
     }
 
     if (game.endless) {
       const left = game.wavesUntilBoss;
-      ctx.font = `600 10px ${UI_FONT}`;
+      ty += lineH;
+      ctx.font = `600 ${this.fs(10)}px ${UI_FONT}`;
       ctx.fillStyle = css(left === 0 ? 0xff4f5e : 0xffcc55);
       ctx.fillText(
         left === 0
           ? tr('hud.wave.bossWave', 'BOSS WAVE')
           : tr('hud.wave.bossIn', 'BOSS IN {n} WAVE{s}', { n: left, s: left === 1 ? '' : 'S' }),
-        cx, pipY + (isPrep ? 50 : 34),
+        cx, ty, maxW,
       );
     }
+    return ty + Math.round(lineH / 2);
   }
 
   /* ---- build bar ------------------------------------------------------- */
@@ -494,15 +592,20 @@ export class Hud {
   /** Minimap visibility, toggled by the touch overview button. */
   showMinimap = true;
 
-  private minimap(ctx: Ctx, game: Game, w: number, h: number) {
-    if (this.compact && !this.showMinimap) return;
+  /** Draws the minimap; returns its left edge on touch, or null when hidden. */
+  private minimap(ctx: Ctx, game: Game, w: number, h: number): number | null {
+    if (this.compact && !this.showMinimap) return null;
     const s = this.compact ? this.uiScale : 1;
     // On touch the bottom-right corner is the action cluster, so the map moves to
     // the top-right, under the pause and overview buttons.
     const size = this.compact ? Math.round(Math.min(118 * s, h * 0.28)) : 168;
     const pad = this.compact ? Math.round(12 * s) : 18;
     const x0 = w - size - pad - this.insets.right;
-    const y0 = this.compact ? Math.round(104 * s) + this.insets.top : h - size - pad - this.insets.bottom;
+    // Touch: under the pause/overview buttons, and never over the top stack
+    // (which grows in portrait, or when a boss bar joins it).
+    const y0 = this.compact
+      ? Math.max(Math.round(104 * s) + this.insets.top, this.topClear + pad)
+      : h - size - pad - this.insets.bottom;
     const world = game.world;
     const sx = size / world.pxW;
     const sy = size / world.pxH;
@@ -593,6 +696,7 @@ export class Hud {
     ctx.lineWidth = 1;
     techRect(ctx, x0, y0, size, size, 10);
     ctx.stroke();
+    return x0;
   }
 
   /* ---- left status rail ------------------------------------------------ */
@@ -674,19 +778,29 @@ export class Hud {
 
   /* ---- boss bar -------------------------------------------------------- */
 
-  private bossBar(ctx: Ctx, game: Game, w: number) {
+  /**
+   * Boss name, health and incoming-ability warning. On touch it stacks under
+   * `top` (the wave tracker's bottom) and returns its own bottom edge.
+   */
+  private bossBar(ctx: Ctx, game: Game, w: number, top = 0): number {
     const e = game.bossRef!;
-    const bw = this.compact ? Math.min(420, w - 220) : Math.min(760, w - 200);
-    const x = (w - bw) / 2;
-    const y = this.compact ? Math.round(76 * this.uiScale) + this.insets.top : 132;
+    const k = this.k;
+    const pad = Math.round(14 * k) + this.insets.left;
+    const bw = !this.compact ? Math.min(760, w - 200)
+      : this.portrait ? this.stripRight(w) - pad
+      : Math.min(420, w - 220);
+    const x = this.compact && this.portrait ? pad : (w - bw) / 2;
+    const cx = x + bw / 2;
+    const y = this.compact ? top + Math.round(30 * k) : 132;
+    const bh = Math.round(16 * k);
 
     ctx.textAlign = 'center';
-    ctx.font = `700 20px ${UI_FONT}`;
+    ctx.font = `700 ${this.fs(20)}px ${UI_FONT}`;
     ctx.fillStyle = css(0xff4f5e);
-    ctx.fillText(enemyName(e.def), w / 2, y - 14);
+    ctx.fillText(enemyName(e.def), cx, y - Math.round(14 * k), bw);
 
     ctx.fillStyle = rgba(0x000000, 0.72);
-    techRect(ctx, x, y, bw, 16, 6);
+    techRect(ctx, x, y, bw, bh, 6);
     ctx.fill();
 
     const pct = clamp(e.hp / e.maxHp, 0, 1);
@@ -695,7 +809,7 @@ export class Hud {
     g.addColorStop(0.5, '#ff4f5e');
     g.addColorStop(1, '#ff8a5c');
     ctx.fillStyle = g;
-    techRect(ctx, x, y, Math.max(3, bw * pct), 16, 6);
+    techRect(ctx, x, y, Math.max(3, bw * pct), bh, 6);
     ctx.fill();
 
     if (e.shieldHp > 0 && e.shieldMax > 0) {
@@ -709,25 +823,28 @@ export class Hud {
     for (let i = 1; i < 4; i++) {
       ctx.beginPath();
       ctx.moveTo(x + (bw * i) / 4, y);
-      ctx.lineTo(x + (bw * i) / 4, y + 16);
+      ctx.lineTo(x + (bw * i) / 4, y + bh);
       ctx.stroke();
     }
 
     ctx.strokeStyle = rgba(0xff4f5e, 0.5);
     ctx.lineWidth = 1;
-    techRect(ctx, x, y, bw, 16, 6);
+    techRect(ctx, x, y, bw, bh, 6);
     ctx.stroke();
 
-    ctx.font = `600 11px ${MONO}`;
+    ctx.font = `600 ${this.fs(11)}px ${MONO}`;
     ctx.fillStyle = css(0xffffff);
-    ctx.fillText(`${fmtNum(Math.ceil(e.hp))} / ${fmtNum(e.maxHp)}`, w / 2, y + 8);
+    ctx.fillText(`${fmtNum(Math.ceil(e.hp))} / ${fmtNum(e.maxHp)}`, cx, y + bh / 2);
 
     if (e.castingIndex >= 0) {
       const ab = e.def.abilities![e.castingIndex];
-      ctx.font = `600 11px ${UI_FONT}`;
+      ctx.font = `600 ${this.fs(11)}px ${UI_FONT}`;
       ctx.fillStyle = css(0xffb347);
-      ctx.fillText(tr('hud.boss.abilityIncoming', '⚠  {ability} INCOMING', { ability: ab.id.toUpperCase() }), w / 2, y + 30);
+      ctx.fillText(tr('hud.boss.abilityIncoming', '⚠  {ability} INCOMING', { ability: ab.id.toUpperCase() }),
+        cx, y + bh + Math.round(14 * k), bw);
     }
+    // Room for the ability warning even when idle, so the stack doesn't jump.
+    return y + bh + Math.round(24 * k);
   }
 
   /* ---- tooltip --------------------------------------------------------- */
@@ -744,30 +861,7 @@ export class Hud {
       const stats: string[] = [cost.essence
         ? tr('hud.tooltip.costOreEssence', '{ore} ore · {essence} essence', { ore: cost.ore, essence: cost.essence })
         : tr('hud.tooltip.costOre', '{ore} ore', { ore: cost.ore })];
-      if (d.power) stats.push(d.power < 0
-        ? tr('hud.tooltip.powerSupply', '+{n} power', { n: -d.power })
-        : tr('hud.tooltip.powerDraw', '{n} power draw', { n: d.power }));
-      if (d.damage) stats.push(tr('hud.tooltip.dmg', '{n} dmg', { n: Math.round(d.damage * game.perks.turretDamage) }));
-      if (d.fireRate) stats.push(tr('hud.tooltip.fireRate', '{n}/s', { n: (d.fireRate * game.perks.turretFireRate).toFixed(1) }));
-      if (d.range) stats.push(tr('hud.tooltip.range', '{n} range', { n: Math.round(d.range * game.perks.turretRange) }));
-      if (d.splash) stats.push(tr('hud.tooltip.splash', '{n} splash', { n: d.splash }));
-      if (d.chains) stats.push(tr('hud.tooltip.chains', '{n} chain', { n: d.chains }));
-      if (d.beam) stats.push(d.pierce && d.pierce > 1
-        ? tr('hud.tooltip.beamPierces', 'beam · pierces {n}', { n: d.pierce })
-        : tr('hud.tooltip.beamNeverMisses', 'beam · never misses'));
-      if (d.homing) stats.push(tr('hud.tooltip.guided', 'guided'));
-      if (d.armorPierce === 999) stats.push(tr('hud.tooltip.ignoresArmour', 'ignores armour'));
-      else if (d.armorPierce) stats.push(tr('hud.tooltip.armourPierce', '{n} armour pierce', { n: d.armorPierce }));
-      if (d.burst && d.burst > 1) stats.push(tr('hud.tooltip.burst', '{n}-round burst', { n: d.burst }));
-      if (d.minRange) stats.push(tr('hud.tooltip.minRange', 'min range {n}', { n: d.minRange }));
-      if (d.antiAir) stats.push(tr('hud.tooltip.antiAir', 'anti-air'));
-      if (d.groundOnly) stats.push(tr('hud.tooltip.groundOnly', 'ground only'));
-      if (d.droneSlots) {
-        stats.push(tr('hud.tooltip.droneSlots', '{n} drones', { n: d.droneSlots }));
-        stats.push(tr('hud.tooltip.droneRate', '{n}/s each', { n: (d.droneMineRate! * game.perks.extractorRate).toFixed(1) }));
-        stats.push(tr('hud.tooltip.droneCargo', '{n} cargo', { n: d.droneCargo ?? 0 }));
-      }
-      stats.push(tr('hud.tooltip.hp', '{n} hp', { n: Math.round(d.hp * game.perks.structureHp) }));
+      stats.push(...buildingStats(game, d));
       lines.push(stats.join('   ·   '));
       if (!game.buildValid && game.lastError.life > 0) lines.push(`⚠ ${game.lastError.text}`);
     } else if (game.hoverBuilding) {
@@ -846,28 +940,38 @@ export class Hud {
     // Fade in over the first 15%, hold, fade out over the last 30%.
     const alpha = t > 0.85 ? (1 - t) / 0.15 : t < 0.3 ? t / 0.3 : 1;
     const y = this.compact ? h * 0.36 : h * 0.3;
+    const k = this.k;
+    const half = Math.round(42 * k);
 
     ctx.save();
     ctx.globalAlpha = clamp(alpha, 0, 1);
     ctx.textAlign = 'center';
 
     ctx.fillStyle = 'rgba(4,7,12,0.55)';
-    ctx.fillRect(0, y - 42, w, 84);
+    ctx.fillRect(0, y - half, w, half * 2);
     ctx.strokeStyle = b.color;
     ctx.globalAlpha = clamp(alpha, 0, 1) * 0.6;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(0, y - 42); ctx.lineTo(w, y - 42);
-    ctx.moveTo(0, y + 42); ctx.lineTo(w, y + 42);
+    ctx.moveTo(0, y - half); ctx.lineTo(w, y - half);
+    ctx.moveTo(0, y + half); ctx.lineTo(w, y + half);
     ctx.stroke();
     ctx.globalAlpha = clamp(alpha, 0, 1);
 
-    ctx.font = `700 40px ${UI_FONT}`;
+    // A long sector name at a large UI scale can outgrow a phone: shrink the
+    // title to fit rather than clip it at the screen edges.
+    let titlePx = Math.round(40 * k);
+    ctx.font = `700 ${titlePx}px ${UI_FONT}`;
+    const tw = ctx.measureText(b.title).width;
+    if (tw > w - 24) {
+      titlePx = Math.max(this.fs(16), Math.floor(titlePx * (w - 24) / tw));
+      ctx.font = `700 ${titlePx}px ${UI_FONT}`;
+    }
     ctx.fillStyle = b.color;
-    ctx.fillText(b.title, w / 2, y - 8);
-    ctx.font = `500 13px ${UI_FONT}`;
+    ctx.fillText(b.title, w / 2, y - Math.round(8 * k));
+    ctx.font = `500 ${this.fs(13)}px ${UI_FONT}`;
     ctx.fillStyle = css(0xc8d4e2);
-    ctx.fillText(b.sub, w / 2, y + 22);
+    ctx.fillText(b.sub, w / 2, y + Math.round(22 * k), w - 24);
     ctx.restore();
   }
 
@@ -901,23 +1005,32 @@ export class Hud {
 
   private errorToast(ctx: Ctx, game: Game, w: number, h: number) {
     if (game.lastError.life <= 0) return;
+    // Touch placement shows the reason in its own hint; don't say it twice.
+    if (this.compact && game.cursorMode === 'build') return;
     const a = clamp(game.lastError.life / 1.6, 0, 1);
+    const k = this.k;
     ctx.save();
     ctx.globalAlpha = a;
     ctx.textAlign = 'center';
-    ctx.font = `600 13px ${UI_FONT}`;
+    ctx.font = `600 ${this.fs(13)}px ${UI_FONT}`;
     const txt = game.lastError.text.toUpperCase();
-    const tw = this.measure(ctx, txt);
-    const y = h - 132;
+    // Touch: the bottom belongs to the thumbs and the action column, so the
+    // toast goes under the top stack, in the hint lane, below any hint there.
+    const area = this.hintArea;
+    const cx = this.compact ? (area.left + area.right) / 2 : w / 2;
+    const maxW = this.compact ? area.right - area.left - 32 : w - 32;
+    const tw = Math.min(this.measure(ctx, txt), maxW);
+    const y = this.compact ? area.top + Math.round(54 * k) : h - 132;
+    const bh = Math.round(28 * k);
     ctx.fillStyle = 'rgba(30,6,10,0.92)';
-    techRect(ctx, w / 2 - tw / 2 - 16, y - 14, tw + 32, 28, 8);
+    techRect(ctx, cx - tw / 2 - 16, y - bh / 2, tw + 32, bh, 8);
     ctx.fill();
     ctx.strokeStyle = rgba(0xff4f5e, 0.6);
     ctx.lineWidth = 1;
-    techRect(ctx, w / 2 - tw / 2 - 16, y - 14, tw + 32, 28, 8);
+    techRect(ctx, cx - tw / 2 - 16, y - bh / 2, tw + 32, bh, 8);
     ctx.stroke();
     ctx.fillStyle = css(0xff8090);
-    ctx.fillText(txt, w / 2, y);
+    ctx.fillText(txt, cx, y, maxW);
     ctx.restore();
   }
 

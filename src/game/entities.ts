@@ -65,6 +65,8 @@ export class Player implements Body {
   dashTime = 0;
   dashDirX = 0;
   dashDirY = 0;
+  /** Enemies already hit by the current dash's Kinetic Ram tick — cleared when a new dash starts. */
+  dashHitIds: number[] = [];
   /** Bought mid-run with essence — see data/loadout.ts and Game.buyWeapon. */
   weapon: WeaponKind = 'rifle';
   weaponsOwned: Set<WeaponKind> = new Set<WeaponKind>(['rifle']);
@@ -137,6 +139,8 @@ export class Building implements Body {
   recoil = 0;
   muzzleFlash = 0;
   hitFlash = 0;
+  /** `Game.elapsed` of the last hull damage — drives off-screen "under attack" pings. */
+  attackedAt = -Infinity;
   kills = 0;
   /** Extractor: the seam it is sitting on. */
   nodeIndex = -1;

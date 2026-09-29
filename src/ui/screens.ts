@@ -123,6 +123,30 @@ export class Screens {
     this.current = null;
   }
 
+  /**
+   * In-game yes/no prompt, layered over the current screen.
+   *
+   * Replaces `window.confirm`, which Android WebViews, fullscreen mobile
+   * browsers and Electron can suppress or auto-answer "no" — the button then
+   * silently does nothing.
+   */
+  private confirmDialog(message: string, onYes: () => void, yesLabel?: string) {
+    const overlay = el('div', 'confirm-overlay');
+    const box = el('div', 'confirm-box');
+    box.appendChild(el('p', undefined, message));
+    const row = el('div', 'row');
+    row.appendChild(this.button(tr('screens.confirm.cancel', 'Cancel'), () => overlay.remove(), 'btn ghost'));
+    row.appendChild(this.button(yesLabel ?? tr('screens.confirm.yes', 'Confirm'), () => {
+      overlay.remove();
+      onYes();
+    }, 'btn danger'));
+    box.appendChild(row);
+    overlay.appendChild(box);
+    // A tap outside the box backs out, same as Cancel.
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    this.layer.appendChild(overlay);
+  }
+
   private button(label: string, onClick: () => void, cls = 'btn') {
     const b = el('button', cls, label);
     b.addEventListener('click', () => { audio.unlock(); audio.play('uiClick'); onClick(); });
@@ -524,11 +548,12 @@ export class Screens {
     btnRow.appendChild(this.button(tr('screens.armoury.back', 'Back'), () => this.showTitle(progress), 'btn ghost'));
     btnRow.appendChild(this.button(tr('screens.armoury.refundAll', 'Refund all'), () => {
       if (progress.spentRelics <= 0) { audio.play('error'); return; }
-      if (!confirm(tr('screens.armoury.refundConfirm', 'Refund every upgrade and get {relics} relics back?',
-        { relics: progress.spentRelics }))) return;
-      progress.respec();
-      audio.play('sell');
-      this.showArmoury(progress);
+      this.confirmDialog(tr('screens.armoury.refundConfirm', 'Refund every upgrade and get {relics} relics back?',
+        { relics: progress.spentRelics }), () => {
+        progress.respec();
+        audio.play('sell');
+        this.showArmoury(progress);
+      }, tr('screens.armoury.refundAll', 'Refund all'));
     }, 'btn ghost'));
     stack.appendChild(btnRow);
 
@@ -853,11 +878,11 @@ export class Screens {
     const row = el('div', 'row');
     row.appendChild(this.button(tr('screens.settings.back', 'Back'), () => this.showTitle(progress), 'btn ghost'));
     row.appendChild(this.button(tr('screens.settings.wipeSave', 'Wipe save'), () => {
-      if (confirm(tr('screens.settings.wipeSaveConfirm',
-        'Erase all achievements, unlocks and lifetime stats? This cannot be undone.'))) {
+      this.confirmDialog(tr('screens.settings.wipeSaveConfirm',
+        'Erase all achievements, unlocks and lifetime stats? This cannot be undone.'), () => {
         localStorage.removeItem('swarm.save.v1');
         location.reload();
-      }
+      }, tr('screens.settings.wipeSave', 'Wipe save'));
     }, 'btn danger'));
     stack.appendChild(row);
 
@@ -939,19 +964,25 @@ export class Screens {
     col.appendChild(this.button(tr('screens.pause.resume', 'Resume'), () => { this.close(); this.cb.onResume(); }));
     col.appendChild(this.button(tr('screens.pause.loadout', 'Loadout'),
       () => this.showLoadout(game, () => this.showPause(game, canSave)), 'btn ghost'));
+    // The touch controls reference; desktop controls are on the title hint bar.
+    if (document.body.classList.contains('touch')) {
+      col.appendChild(this.button(tr('screens.pause.howToPlay', 'How to play'),
+        () => this.showTutorial(() => this.showPause(game, canSave)), 'btn ghost'));
+    }
     col.appendChild(this.button(tr('screens.pause.achievements', 'Achievements'), () => this.showAchievements(progress, 'pause', game), 'btn ghost'));
     col.appendChild(this.button(tr('screens.pause.settings', 'Settings'), () => this.showSettings(progress), 'btn ghost'));
     col.appendChild(this.button(tr('screens.pause.restartSector', 'Restart sector'), () => {
-      if (confirm(tr('screens.pause.restartConfirm', 'Restart this sector from wave 1?'))) this.cb.onRestart();
+      this.confirmDialog(tr('screens.pause.restartConfirm', 'Restart this sector from wave 1?'),
+        () => this.cb.onRestart(), tr('screens.pause.restartSector', 'Restart sector'));
     }, 'btn ghost'));
     // Only offered in a build phase: that is the only state a snapshot covers.
     if (canSave) {
       col.appendChild(this.button(tr('screens.pause.saveAndQuit', 'Save & quit'), () => this.cb.onSaveAndQuit(), 'btn ghost'));
     }
     col.appendChild(this.button(tr('screens.pause.abandonRun', 'Abandon run'), () => {
-      if (confirm(tr('screens.pause.abandonConfirm', 'Abandon the run? Any saved progress for this run is discarded.'))) {
-        this.cb.onQuitToTitle();
-      }
+      this.confirmDialog(
+        tr('screens.pause.abandonConfirm', 'Abandon the run? Any saved progress for this run is discarded.'),
+        () => this.cb.onQuitToTitle(), tr('screens.pause.abandonRun', 'Abandon run'));
     }, 'btn danger'));
     stack.appendChild(col);
     s.appendChild(stack);
@@ -1112,9 +1143,10 @@ export class Screens {
   /* ====================================================================== */
 
   /**
-   * Shown once, right before the player's first deployment — touch only.
-   * Desktop already spells out its controls in the title screen's hint bar;
-   * touch has no equivalent anywhere, so it gets this instead.
+   * Touch control reference, opened from the pause menu. First-time players
+   * are taught in context by the coach (render/coach.ts) instead; this is
+   * the place to look something up again. Desktop spells its controls out in
+   * the title screen's hint bar.
    */
   showTutorial(onDone: () => void) {
     const s = el('div', 'screen opaque');
@@ -1130,11 +1162,14 @@ export class Screens {
         tr('screens.tutorial.mineBody', 'Stand near a seam and hold your finger on it to mine.')],
       ['⌂', tr('screens.tutorial.buildTitle', 'Build'),
         tr('screens.tutorial.buildBody',
-          'Tap Build, pick a structure, then tap the map to place it. Tap Build again to cancel.')],
+          'Tap Build and pick a structure. Tap the map to aim, then ✓ to build — walls go down on tap. '
+          + 'Hold a slot in the drawer for details.')],
+      ['✥', tr('screens.tutorial.lookTitle', 'Look & zoom'),
+        tr('screens.tutorial.lookBody', 'While building, drag the map to look around. Pinch with two fingers to zoom.')],
       ['»', tr('screens.tutorial.dashTitle', 'Dash'),
         tr('screens.tutorial.dashBody', 'Tap Dash for a quick burst — good for dodging or closing gaps.')],
       ['✚', tr('screens.tutorial.manageTitle', 'Manage structures'),
-        tr('screens.tutorial.manageBody', 'Long-press one for repair, sell, or targeting options.')],
+        tr('screens.tutorial.manageBody', 'Long-press one for repair, sell (tap twice), or targeting options.')],
     ];
 
     const list = el('div');
@@ -1165,7 +1200,7 @@ export class Screens {
     }
     stack.appendChild(list);
 
-    stack.appendChild(this.button(tr('screens.tutorial.begin', "Let's go"), () => {
+    stack.appendChild(this.button(tr('screens.tutorial.back', 'Back'), () => {
       this.close();
       onDone();
     }));

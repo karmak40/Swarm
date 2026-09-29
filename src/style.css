@@ -119,8 +119,13 @@ html, body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  /* `safe center`: centers when everything fits, but falls back to top-aligned
+     once content overflows — plain `center` here clips the top of the stack
+     and, because it's centering overflow instead of a scroll offset, that
+     clipped part isn't reachable by scrolling at all. */
+  justify-content: safe center;
   gap: 26px;
+  padding-block: 24px;
   background: radial-gradient(120% 90% at 50% 40%, rgba(8, 14, 26, 0.82), rgba(2, 4, 8, 0.97));
   animation: fade-in 260ms ease both;
   /* Content height varies with language, unlock state and stat-grid wrapping —
@@ -129,6 +134,32 @@ html, body {
   overflow-x: hidden;
 }
 .screen.opaque { background: radial-gradient(120% 90% at 50% 30%, #0a1424, #02040a 75%); }
+
+/* In-game replacement for window.confirm — see Screens.confirmDialog. */
+.confirm-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(2, 4, 8, 0.78);
+  animation: fade-in 160ms ease both;
+}
+.confirm-box {
+  width: min(420px, 100%);
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  background: #080d16;
+  border: 1px solid rgba(255, 79, 94, 0.45);
+  box-shadow: 0 0 40px rgba(255, 79, 94, 0.15);
+}
+.confirm-box p { margin: 0; font-size: 14px; line-height: 1.6; color: var(--ink-dim); text-align: center; }
+.confirm-box .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.confirm-box .row .btn { flex: 1 1 120px; }
 
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }

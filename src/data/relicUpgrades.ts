@@ -143,6 +143,21 @@ export const RELIC_UPGRADES: RelicUpgrade[] = [
     desc: 'Pull essence in from much further away.',
     maxRank: 2, baseCost: 4, costStep: 4, perRank: { pickupRadius: 1.25 },
   },
+  {
+    id: 'dash_thrusters', name: 'Recharge Cycles', icon: '🔋', category: 'chassis',
+    desc: 'The dash thrusters cool down faster.',
+    maxRank: 4, baseCost: 4, costStep: 3, perRank: { dashCooldown: 0.88 },
+  },
+  {
+    id: 'dash_shielding', name: 'Phase Shielding', icon: '🛡️', category: 'chassis',
+    desc: 'Longer invulnerability while dashing.',
+    maxRank: 3, baseCost: 5, costStep: 4, perRank: { dashInvuln: 0.06 },
+  },
+  {
+    id: 'dash_ram', name: 'Kinetic Ram', icon: '💥', category: 'chassis',
+    desc: 'Anything you dash through takes a hit.',
+    maxRank: 3, baseCost: 6, costStep: 5, perRank: { dashRamDamage: 22 },
+  },
 
   // --- doctrine ---
   {

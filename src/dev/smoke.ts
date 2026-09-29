@@ -56,14 +56,17 @@ import { ENDLESS_BOSS_INTERVAL, endlessBudget, endlessScaling, isEndlessBossWave
 import { WaveDirector } from '../game/waves';
 import { clearRun, loadRun, saveRun } from '../core/save';
 import { QUALITY } from '../core/platform';
+import { QualityGovernor, minQuality } from '../core/autoQuality';
 import { TouchInput } from '../core/touch';
+import { TouchHud } from '../render/touchHud';
+import { Coach } from '../render/coach';
 import { LEVELS, waveScaling, ngDifficultyMult, makeSkirmishLevel } from '../data/levels';
 import { WEAPONS, WEAPON_KINDS, ARMOR_TIERS } from '../data/loadout';
 import { TECH_CARDS } from '../data/tech';
 import { Game } from '../game/game';
 import { TILE } from '../game/world';
 import type { Input } from '../core/input';
-import { saveNow } from '../core/save';
+import { saveNow, loadSave } from '../core/save';
 
 const DT = 1 / 60;
 
@@ -161,9 +164,12 @@ function testWorldGeneration() {
     let worstGround = 1;
     let fewestNodes = Infinity;
     let fewestRich = Infinity;
+    let fewestHazard = Infinity;
     let strandedSeeds: string[] = [];
     let closedPlazas: string[] = [];
     let tightBuilds: string[] = [];
+    let hazardOnGate: string[] = [];
+    let hazardInPlaza: string[] = [];
     let identical = 0;
     let firstSignature = '';
 
@@ -172,16 +178,22 @@ function testWorldGeneration() {
       game.startLevel(lv.id, undefined, seed);
       const w = game.world;
 
-      let ground = 0;
-      for (let i = 0; i < w.tiles.length; i++) if (w.tiles[i] !== 1) ground++;
+      let ground = 0, hazard = 0;
+      for (let i = 0; i < w.tiles.length; i++) {
+        if (w.tiles[i] !== 1) ground++;
+        if (w.tiles[i] === 4) hazard++; // Tile.Hazard
+      }
       worstGround = Math.min(worstGround, ground / w.tiles.length);
       fewestNodes = Math.min(fewestNodes, w.nodes.length);
       fewestRich = Math.min(fewestRich, w.nodes.filter((n) => n.rich).length);
+      fewestHazard = Math.min(fewestHazard, hazard);
 
       if (w.spawns.some((sp) => !w.field.reachable(sp.tx, sp.ty))) {
         strandedSeeds.push(seed.toString(16));
       }
       if (w.isSolid(w.coreTx, w.coreTy)) closedPlazas.push(seed.toString(16));
+      if (w.spawns.some((sp) => w.tileAt(sp.tx, sp.ty) === 4)) hazardOnGate.push(seed.toString(16));
+      if (w.tileAt(w.coreTx, w.coreTy) === 4) hazardInPlaza.push(seed.toString(16));
 
       // There must be real room to build around the core, or the level is a trap.
       let buildable = 0;
@@ -213,6 +225,14 @@ function testWorldGeneration() {
       tightBuilds.join(','));
     check(`${lv.name}: seeds produce different maps`, identical === 0,
       `${identical} duplicate layouts`);
+    if (lv.hazardPools > 0) {
+      check(`${lv.name}: every seed places hazard pools`, fewestHazard > 0,
+        `fewest ${fewestHazard} tiles, wanted ${lv.hazardPools} pools`);
+    }
+    check(`${lv.name}: no seed puts hazard on a gate`, hazardOnGate.length === 0,
+      hazardOnGate.join(','));
+    check(`${lv.name}: no seed puts hazard in the core plaza`, hazardInPlaza.length === 0,
+      hazardInPlaza.join(','));
   }
 }
 
@@ -280,6 +300,34 @@ function testPlacementRules() {
   const tx = w.coreTx + 3;
   const before = w.field.costAt(tx, w.coreTy);
   check('open ground costs 1', before === 1, String(before));
+}
+
+function testTerrainHazards() {
+  console.log('\n▸ terrain hazards');
+  const game = new Game();
+  game.startLevel(1, undefined, FIXED_SEED); // Verdant Rot: hazardPools 3
+  const w = game.world;
+
+  let hazardIdx = -1;
+  for (let i = 0; i < w.tiles.length; i++) if (w.tiles[i] === 4) { hazardIdx = i; break; } // Tile.Hazard
+  check('a hazard tile exists on this map', hazardIdx >= 0);
+  if (hazardIdx < 0) return;
+
+  const htx = hazardIdx % w.w, hty = (hazardIdx / w.w) | 0;
+  check('hazard tile is not solid', !w.isSolid(htx, hty));
+  check('hazard tile costs more to path through than open ground',
+    w.field.costAt(htx, hty) > 1, String(w.field.costAt(htx, hty)));
+  check('cannot build on a hazard tile', game.canPlace(BUILDINGS.turret, htx, hty) !== null);
+
+  // Stand the player on it and let a few seconds of tick chip hp away.
+  game.player.x = (htx + 0.5) * TILE;
+  game.player.y = (hty + 0.5) * TILE;
+  game.player.invuln = 0;
+  const hpBefore = game.player.hp;
+  const input = idleInput();
+  for (let i = 0; i < 180; i++) game.update(DT, input); // 3s
+  check('standing in hazard costs hp over time', game.player.hp < hpBefore,
+    `before ${hpBefore.toFixed(1)}, after ${game.player.hp.toFixed(1)}`);
 }
 
 function testMining() {
@@ -1264,6 +1312,54 @@ function testRelicShop() {
   check('deeper sectors pay more', g2.progress.awardSectorClear(4) > paid);
 }
 
+function testDashUpgrades() {
+  console.log('\n▸ dash upgrades');
+  const game = new Game();
+  const p = game.progress;
+  p.data.relics = 0;
+  p.data.relicUpgrades = {};
+  p.perks = p.computePerks();
+  p.awardRelics(500);
+
+  for (const id of ['dash_thrusters', 'dash_shielding', 'dash_ram']) {
+    const u = UPGRADES_BY_ID.get(id)!;
+    let guard = 0;
+    while (p.nextCost(u) !== null && guard++ < 10) p.buyUpgrade(id);
+    check(`${id} reaches max rank`, p.rankOf(id) === u.maxRank, `${p.rankOf(id)}/${u.maxRank}`);
+  }
+  check('dash cooldown perk improves below base', p.perks.dashCooldown < 1, `${p.perks.dashCooldown}`);
+  check('dash invuln perk accrues above base', p.perks.dashInvuln > 0, `${p.perks.dashInvuln}`);
+  check('dash ram perk accrues above base', p.perks.dashRamDamage > 0, `${p.perks.dashRamDamage}`);
+
+  game.startLevel(0, undefined, FIXED_SEED);
+  check('a fresh run picks up the bought dash perks',
+    game.perks.dashRamDamage === p.perks.dashRamDamage,
+    `${game.perks.dashRamDamage} vs ${p.perks.dashRamDamage}`);
+
+  // Park a tough, stationary target right next to the player, then dash into it.
+  const e = game.spawnEnemy(ENEMIES.crawler, game.player.x + 20, game.player.y, 1, 1, false);
+  e.hp = 5000; e.maxHp = 5000;
+  const hpBefore = e.hp;
+
+  const dashInput = {
+    ...idleInput(), uiCaptured: false,
+    pressed: (k: string) => k === 'ShiftLeft',
+    axis: () => ({ x: 1, y: 0 }),
+  } as unknown as Input;
+  game.update(DT, dashInput);
+  check('dash actually triggers', game.player.dashTime > 0, `${game.player.dashTime}`);
+  check('bought cooldown perk is what got applied',
+    Math.abs(game.player.dashCooldown - 1.35 * p.perks.dashCooldown) < 1e-6,
+    `${game.player.dashCooldown}`);
+
+  const idle = idleInput();
+  let guard = 0;
+  while (game.player.dashTime > 0 && guard++ < 30) game.update(DT, idle);
+  check('kinetic ram damaged the enemy it dashed through', e.hp < hpBefore, `${hpBefore} → ${e.hp}`);
+  check('the ram hits an enemy once per dash, not once per frame',
+    game.player.dashHitIds.length === 1, `${game.player.dashHitIds.length}`);
+}
+
 /** Runs the sim until a build phase opens, executing anything that spawns. */
 function runToBuildPhase(game: Game, input: Input, maxSeconds = 400): boolean {
   let guard = 0;
@@ -1712,6 +1808,166 @@ function testQualityTiers() {
   check('lower density still emits something', low > 0, String(low));
 }
 
+function testSaveMigration() {
+  console.log('\n▸ save migration');
+  const KEY = 'swarm.save.v1';
+  const prev = store.get(KEY);
+
+  // A save from before the touch coach: only the old one-shot legend flag.
+  store.set(KEY, JSON.stringify({ version: 3, tutorialSeen: true }));
+  const old = loadSave();
+  check('legend veterans skip the move/build tips',
+    old.coachDone.length === 2 && old.coachDone.includes('move') && old.coachDone.includes('build'));
+  check('the legacy tutorialSeen flag is dropped', !('tutorialSeen' in old));
+
+  store.set(KEY, JSON.stringify({ version: 3, tutorialSeen: false }));
+  check('a fresh legacy save gets every tip', loadSave().coachDone.length === 0);
+
+  store.set(KEY, JSON.stringify({ version: 3, coachDone: ['drawer'], autoQualityCap: 'medium' }));
+  const cur = loadSave();
+  check('current-format coach progress and quality cap survive a load',
+    cur.coachDone.join() === 'drawer' && cur.autoQualityCap === 'medium');
+
+  if (prev === undefined) store.delete(KEY); else store.set(KEY, prev);
+}
+
+function testQualityGovernor() {
+  console.log('\n▸ auto quality');
+  const run = (g: QualityGovernor, seconds: number, dt: number, q: 'high' | 'medium' | 'low', active = true) => {
+    let out: string | null = null;
+    for (let t = 0; t < seconds && !out; t += dt) out = g.sample(dt, active, q);
+    return out;
+  };
+
+  const a = new QualityGovernor();
+  check('60 fps never downgrades', run(a, 30, 1 / 60, 'high') === null);
+  check('a brief dip does not downgrade', run(a, 2, 1 / 25, 'high') === null && run(a, 5, 1 / 60, 'high') === null);
+  const b = new QualityGovernor();
+  check('sustained 25 fps steps high → medium', run(b, 10, 1 / 25, 'high') === 'medium');
+  check('the new tier gets time to settle', run(b, 5, 1 / 25, 'medium') === null);
+  check('still slow afterwards steps medium → low', run(b, 20, 1 / 25, 'medium') === 'low');
+  check('low is the floor', run(b, 30, 1 / 25, 'low') === null);
+
+  const c = new QualityGovernor();
+  check('stalls (backgrounded tab) are not a frame rate', run(c, 30, 0.5, 'high') === null);
+  check('frames outside play are ignored', run(c, 30, 1 / 20, 'high', false) === null);
+  check('minQuality picks the cheaper tier', minQuality('high', 'medium') === 'medium' && minQuality('low', 'high') === 'low');
+}
+
+function testCoach() {
+  console.log('\n▸ touch coach');
+  const stub = { addEventListener: () => {}, getBoundingClientRect: () => ({ left: 0, top: 0 }) };
+  const t = new TouchInput(stub as unknown as HTMLElement);
+  t.layout(375, 812, { southpaw: false, scale: 1 });
+  const hud = new TouchHud();
+  const game = new Game();
+  game.startLevel(0, undefined, 0xc0ac4);
+  game.touchUi = true;
+  game.presentation.elapsed = 5;          // past the opening delay
+
+  const make = () => {
+    const done: string[] = [];
+    const coach = new Coach(() => done, () => {});
+    const cur = () => (coach as unknown as { current: { id: string } | null }).current?.id ?? null;
+    const step = (frames = 1) => { for (let i = 0; i < frames; i++) coach.update(0.1, game, t, hud, 375, 812); };
+    return { done, coach, cur, step };
+  };
+
+  // Walk the opening sequence.
+  const a = make();
+  a.step();
+  check('first tip is movement', a.cur() === 'move', String(a.cur()));
+  t.stick.active = true; a.step(7); t.stick.active = false;
+  check('moving retires the move tip', a.done.includes('move') && a.cur() === null);
+  a.step(12);
+  check('then: tap build', a.cur() === 'build', String(a.cur()));
+  t.drawerOpen = true; a.step(12);
+  check('opening the drawer retires build and explains the drawer',
+    a.done.includes('build') && a.cur() === 'drawer', String(a.cur()));
+  hud.drawerInfo = 'turret'; a.step();
+  check('holding a slot retires the drawer tip', a.done.includes('drawer'));
+  hud.drawerInfo = null;
+
+  t.drawerOpen = false;
+  game.buildKind = 'turret'; game.cursorMode = 'build';
+  t.placing = true; t.confirmPlacement = true;
+  a.step(12);
+  check('placing a turret explains ✓', a.cur() === 'place', String(a.cur()));
+  const def = BUILDINGS.turret;
+  const cx = Math.floor(game.core.x / TILE), cy = Math.floor(game.core.y / TILE);
+  let placed = false;
+  for (let r = 3; r < 12 && !placed; r++) {
+    for (let dx = -r; dx <= r && !placed; dx++) {
+      if (game.canPlace(def, cx + dx, cy + r) === null) {
+        (game as unknown as { buildingSystem: { place: (d: typeof def, x: number, y: number) => void } })
+          .buildingSystem.place(def, cx + dx, cy + r);
+        placed = true;
+      }
+    }
+  }
+  a.step();
+  check('placing one retires the ✓ tip', placed && a.done.includes('place'));
+  a.step(12);
+  check('next placement explains looking around', a.cur() === 'look', String(a.cur()));
+  a.coach.saw('pan'); a.step();
+  check('panning retires the look tip', a.done.includes('look'));
+  t.placing = false; t.confirmPlacement = false;
+  game.buildKind = null; game.cursorMode = 'normal';
+
+  // Already-discovered gestures are never explained.
+  const b = make();
+  t.drawerOpen = true;
+  b.step();
+  check('a gesture found unprompted is marked learned without a tip',
+    b.done.includes('build') && b.cur() !== 'build');
+  t.drawerOpen = false;
+
+  // Ignored tips retire instead of nagging.
+  const c = make();
+  c.step();
+  c.step(150);
+  check('an ignored tip retires after its time on screen', c.done.includes('move'));
+}
+
+function testTouchPinch() {
+  console.log('\n▸ touch pinch');
+  const stub = { addEventListener: () => {}, getBoundingClientRect: () => ({ left: 0, top: 0 }) };
+  const t = new TouchInput(stub as unknown as HTMLElement);
+  t.layout(375, 812, { southpaw: false, scale: 1 });
+  // Drive the private pointer handlers with minimal PointerEvent stand-ins.
+  const h = t as unknown as Record<'onDown' | 'onMove' | 'onUp', (e: unknown) => void>;
+  const ev = (id: number, x: number, y: number) => ({ pointerId: id, clientX: x, clientY: y, preventDefault() {} });
+
+  h.onDown(ev(1, 250, 300));
+  h.onDown(ev(2, 250, 400));
+  h.onMove(ev(2, 250, 500));              // spacing 100 → 200
+  check('spreading two fingers zooms in 2×', Math.abs(t.consumePinch() - 2) < 1e-9);
+  check('pinch factor is consumed', t.consumePinch() === 1);
+  h.onMove(ev(1, 250, 400));              // spacing 200 → 100
+  check('pinching in zooms out ½×', Math.abs(t.consumePinch() - 0.5) < 1e-9);
+  h.onUp(ev(2, 250, 500));
+  h.onMove(ev(1, 300, 600));              // leftover finger wanders
+  h.onUp(ev(1, 300, 600));
+  check('a pinch never lands as a tap or hold', t.mapTap === null && !t.mapHeld);
+  check('leftover pinch finger does not pan', t.consumePan().x === 0);
+
+  // Thumb on the stick + one finger on the map is moving and aiming, not a pinch.
+  h.onDown(ev(3, 60, 700));
+  h.onDown(ev(4, 300, 300));
+  h.onMove(ev(4, 300, 420));
+  check('stick + map finger is not a pinch', t.stick.active && t.consumePinch() === 1);
+  t.reset();
+
+  // The build drawer's left slots overlap the stick zone in portrait; with it
+  // open, a tap there has to reach the drawer, not summon the stick.
+  t.drawerOpen = true;
+  h.onDown(ev(5, 60, 740));
+  h.onUp(ev(5, 60, 740));
+  check('drawer open: stick-zone tap is a tap, not the stick', !t.stick.active && t.mapTap !== null);
+  t.drawerOpen = false;
+  t.reset();
+}
+
 function testTouchLayout() {
   console.log('\n▸ touch layout');
   // TouchInput only needs an event target; layout itself is pure maths.
@@ -1727,10 +1983,13 @@ function testTouchLayout() {
   const overlaps = (a: R, b: R) =>
     a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 
-  // Landscape phone, small tablet, and an oversized UI scale.
+  // Landscape phone, small tablet, portrait phones, and an oversized UI scale.
   const cases: [number, number, number][] = [
     [812, 375, 1], [667, 375, 1], [896, 414, 1], [1024, 768, 1], [812, 375, 1.6],
+    [375, 812, 1], [390, 844, 1], [360, 740, 1.2], [360, 640, 1.6],
   ];
+  // Controls that share a slot and are never visible together.
+  const exclusive = new Set(['startWave/confirm', 'confirm/startWave']);
 
   for (const [w, h, scale] of cases) {
     const tag = `${w}x${h}@${scale}`;
@@ -1745,7 +2004,8 @@ function testTouchLayout() {
     const collisions: string[] = [];
     for (let i = 0; i < all.length; i++) {
       for (let j = i + 1; j < all.length; j++) {
-        if (overlaps(all[i], all[j])) collisions.push(`${all[i].id}/${all[j].id}`);
+        const pair = `${all[i].id}/${all[j].id}`;
+        if (overlaps(all[i], all[j]) && !exclusive.has(pair)) collisions.push(pair);
       }
     }
     check(`${tag}: no two controls overlap`, collisions.length === 0, collisions.join(','));
@@ -2259,6 +2519,7 @@ testSeedReproducibility();
 testMapScaleSanity();
 testBuildCategories();
 testPlacementRules();
+testTerrainHazards();
 testFlowFieldAvoidsWalls();
 testMining();
 testPowerBrownout();
@@ -2274,6 +2535,10 @@ testForceField();
 testTouchActions();
 testQualityTiers();
 testTouchLayout();
+testTouchPinch();
+testCoach();
+testQualityGovernor();
+testSaveMigration();
 testDroneBay();
 testDroneVulnerability();
 testDroneSnapshot();
@@ -2281,6 +2546,7 @@ testEndlessMode();
 testRunSnapshot();
 testEarlyWaveStart();
 testRelicShop();
+testDashUpgrades();
 testMuzzleFlare();
 testMissileBattery();
 testPulseLaser();

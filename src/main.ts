@@ -6,13 +6,16 @@ import { LEVELS, type LevelDef } from './data/levels';
 import { achievementName, achievementDesc } from './data/achievements';
 import { levelName } from './data/levels';
 import type { TechCard } from './data/tech';
+import type { BuildingKind } from './data/buildings';
 import { Game, type GameMode } from './game/game';
 import { Hud } from './render/hud';
 import { Renderer } from './render/renderer';
 import { Screens, type ResumeInfo } from './ui/screens';
 import { TouchInput } from './core/touch';
 import { TouchHud } from './render/touchHud';
+import { Coach } from './render/coach';
 import { detectCoarsePointer, detectQuality, isPortrait, type Quality } from './core/platform';
+import { QualityGovernor, minQuality } from './core/autoQuality';
 import { detectLocale, setLocale, getLocale, t } from './core/i18n';
 import { hideStatusBar, lockOrientation, onBackButton, minimizeApp } from './core/native';
 
@@ -31,6 +34,7 @@ const renderer = new Renderer(canvas);
 const hud = new Hud();
 const touchHud = new TouchHud();
 const game = new Game();
+const coach = new Coach(() => game.progress.data.coachDone, () => saveNow(game.progress.data));
 
 /* -------------------------------------------------------------------------- */
 /* Control scheme                                                             */
@@ -74,9 +78,25 @@ function applyControlScheme() {
   if (!touchMode) touch.reset();
 }
 
+/** Steps 'auto' quality down when the frame rate stays low (see autoQuality.ts). */
+const governor = new QualityGovernor();
+/** The tier actually in use, after 'auto' and any learned ceiling. */
+let currentQuality: Quality = 'high';
+let lastQualityPref: string | null = null;
+
 function applyQuality() {
-  const pref = game.progress.data.settings.quality;
-  const q: Quality = pref === 'auto' ? detectQuality() : pref;
+  const data = game.progress.data;
+  const pref = data.settings.quality;
+  // The player touching the setting overrides whatever the governor learned —
+  // including re-picking 'auto', which is how to let a device try again.
+  if (lastQualityPref !== null && pref !== lastQualityPref) {
+    data.autoQualityCap = null;
+    governor.reset();
+  }
+  lastQualityPref = pref;
+  const cap = data.autoQualityCap;
+  const q: Quality = pref !== 'auto' ? pref : cap ? minQuality(detectQuality(), cap) : detectQuality();
+  currentQuality = q;
   renderer.setQuality(q);
   game.particles.density = renderer.quality.particleDensity;
   game.setViewport(renderer.width, renderer.height);
@@ -212,18 +232,11 @@ function beginLevel(index: number | LevelDef, fresh: boolean, mode: GameMode = '
   game.frozen = true;
   state = 'briefing';
   screens.showBriefing(game, () => {
-    const startPlaying = () => { state = 'playing'; game.frozen = false; };
-    // Touch has no on-screen control legend anywhere else — desktop's title
-    // screen hint bar already covers WASD/mouse, so this only fires once, for
-    // touch, right before the very first deployment.
-    if (touchMode && !game.progress.data.tutorialSeen) {
-      game.progress.data.tutorialSeen = true;
-      saveNow(game.progress.data);
-      state = 'modal';
-      screens.showTutorial(startPlaying);
-    } else {
-      startPlaying();
-    }
+    // Touch controls are taught in context by the coach (render/coach.ts)
+    // rather than an up-front legend; the legend lives on in the pause menu.
+    coach.reset();
+    state = 'playing';
+    game.frozen = false;
   });
 }
 
@@ -384,22 +397,83 @@ document.addEventListener('visibilitychange', () => {
 /* Touch routing                                                              */
 /* -------------------------------------------------------------------------- */
 
+/** Structures placed by dragging a finger along the map, without ✓. */
+const DRAG_PLACED = new Set<BuildingKind>(['wall']);
+
+/** World point the pending placement ghost is pinned to (touch only). */
+let ghostAnchor: { x: number; y: number } | null = null;
+
+/**
+ * Pins the touch placement ghost to the world.
+ *
+ * `TouchInput.mouseX/Y` is a screen point that only moves under a finger, but
+ * the camera follows the player — so without this, walking with the stick
+ * while a ✓ is pending would slide the ghost across the map. A finger on the
+ * map re-aims the anchor; otherwise the screen point is re-derived from it.
+ * Shake is left out on purpose: the ghost shouldn't jitter with the screen.
+ */
+function anchorGhost() {
+  if (!touch.placing) { ghostAnchor = null; game.aimOverride = null; return; }
+  const cam = game.camera;
+  const w = renderer.width, h = renderer.height;
+  // A fresh placement starts mid-screen, whatever the last tap was.
+  if (!ghostAnchor && !touch.mapHeld && !touch.mapTap) {
+    touch.mouseX = w / 2;
+    touch.mouseY = h / 2;
+  }
+  if (touch.mapHeld || touch.mapTap || !ghostAnchor) {
+    ghostAnchor = {
+      x: cam.x + (touch.mouseX - w / 2) / cam.zoom,
+      y: cam.y + (touch.mouseY - h / 2) / cam.zoom,
+    };
+  } else {
+    touch.mouseX = (ghostAnchor.x - cam.x) * cam.zoom + w / 2;
+    touch.mouseY = (ghostAnchor.y - cam.y) * cam.zoom + h / 2;
+  }
+  // Game aims from this world point directly: re-deriving it from the screen
+  // point after the camera moves this frame would make the ghost swim a tile.
+  game.aimOverride = ghostAnchor;
+}
+
+/** Which touch buttons exist right now, from drawer/placement/phase state. */
+function syncTouchButtons() {
+  touch.placing = game.cursorMode === 'build' && game.buildKind !== null;
+  touch.confirmPlacement = touch.placing && !DRAG_PLACED.has(game.buildKind!);
+  // The drawer covers the bottom of the screen, so the action cluster steps
+  // aside; leaving it tappable underneath is how you dash instead of building.
+  const drawer = touch.drawerOpen;
+  const confirming = !drawer && touch.placing && touch.confirmPlacement;
+  touch.setVisible('dash', !drawer);
+  touch.setVisible('build', !drawer);
+  touch.setVisible('confirm', confirming);
+  // The "start wave" button only exists while a build window is open, and
+  // gives its slot to ✓ while a placement is pending.
+  touch.setVisible('startWave', !drawer && !confirming && game.inBuildPhase && game.prepRemaining > 2);
+}
+
 /** Consumes this frame's touch events and turns them into game actions. */
 function handleTouch() {
-  if (!touchMode || state !== 'playing') return;
+  if (!touchMode) { game.aimOverride = null; game.buildCamHold = false; return; }
+  if (state !== 'playing') return;
   const st = game.progress.data.settings;
 
   touch.drawerOpen = touch.drawerOpen && !screens.isModal;
   touch.placing = game.cursorMode === 'build' && game.buildKind !== null;
   touchHud.lastWidth = renderer.width;
+  anchorGhost();
 
-  // The drawer covers the bottom of the screen, so the action cluster steps
-  // aside; leaving it tappable underneath is how you dash instead of building.
-  const drawer = touch.drawerOpen;
-  touch.setVisible('dash', !drawer);
-  touch.setVisible('build', !drawer);
-  // The "start wave" button only exists while a build window is open.
-  touch.setVisible('startWave', !drawer && game.inBuildPhase && game.prepRemaining > 2);
+  // Build-mode look-around: dragging the map (off the ghost) moves the view,
+  // which stays put until building ends, then eases back to the player.
+  const pinch = touch.consumePinch();
+  if (pinch !== 1) { game.zoomCamera(pinch); coach.saw('pinch'); }
+  const pan = touch.consumePan();
+  if (pan.x || pan.y) {
+    game.panCamera(-pan.x / game.camera.zoom, -pan.y / game.camera.zoom);
+    coach.saw('pan');
+  }
+  game.buildCamHold = touch.placing || touch.drawerOpen;
+
+  syncTouchButtons();
 
   for (const b of touch.buttons) {
     if (!b.tapped) continue;
@@ -422,6 +496,7 @@ function handleTouch() {
           game.cursorMode = 'normal';
         } else {
           touch.drawerOpen = true;
+          touchHud.drawerInfo = null;
         }
         touchHud.closeMenu();
         audio.play('uiClick');
@@ -435,13 +510,22 @@ function handleTouch() {
         audio.play('uiClick');
         break;
       case 'dash':
-        break;                        // read directly via input.pressed
+      case 'confirm':
+        break;                        // read by Game via input.pressed / mouseDown
     }
   }
 
+  // Again, now that a tap may have opened/closed the drawer — otherwise this
+  // frame draws Dash/Close on top of a freshly opened drawer.
+  syncTouchButtons();
+
   // Long press on a structure opens the context menu.
   const lp = touch.consumeLongPress();
-  if (lp && !touch.drawerOpen) {
+  if (lp && touch.drawerOpen) {
+    // Long-press a drawer slot for its details; a tap still builds.
+    const kind = touchHud.hitDrawer(lp.x, lp.y);
+    if (kind) { touchHud.drawerInfo = kind; audio.play('uiClick'); }
+  } else if (lp) {
     if (game.hoverBuilding) touchHud.openMenu(lp.x, lp.y, game.hoverBuilding);
     else touchHud.closeMenu();
   }
@@ -452,11 +536,21 @@ function handleTouch() {
     if (touchHud.menu) {
       const hit = touchHud.hitMenu(tap.x, tap.y);
       if (hit) {
-        const b = game.hoverBuilding;
-        if (hit === 'sell' && b) game.sellBuilding(b);
-        else if (hit === 'repair' && b) game.repairBuildingBurst(b);
-        else if (hit === 'target' && b) game.cycleTargeting(b);
-        if (hit !== 'repair') touchHud.closeMenu();
+        // The structure captured when the menu opened — hover has already
+        // moved to wherever this tap landed.
+        const b = touchHud.menuTarget;
+        let keepOpen = hit === 'repair' || hit === 'target';
+        if (hit === 'sell' && b) {
+          // First tap arms, second sells — see TouchHud.sellArmed.
+          if (touchHud.sellArmed) game.sellBuilding(b);
+          else { touchHud.armSell(); keepOpen = true; }
+        } else {
+          // Anything else backs out of a pending sale.
+          touchHud.disarmSell();
+          if (hit === 'repair' && b) game.repairBuildingBurst(b);
+          else if (hit === 'target' && b) game.cycleTargeting(b);
+        }
+        if (!keepOpen) touchHud.closeMenu();
         audio.play('uiClick');
         touch.consumeTap();
         return;
@@ -632,6 +726,28 @@ function showCrash(err: unknown) {
 window.addEventListener('error', (e) => showCrash(e.error ?? e.message));
 window.addEventListener('unhandledrejection', (e) => showCrash(e.reason));
 
+/**
+ * Lets the frame-rate governor drop 'auto' quality a tier on a device that
+ * can't keep up — most often a phone zoomed far out, drawing a lot more map.
+ * Only measured during live play in a visible tab; menus and a throttled
+ * background tab say nothing about render cost.
+ */
+function governQuality(realDt: number) {
+  const data = game.progress.data;
+  if (data.settings.quality !== 'auto') return;
+  const live = state === 'playing' && !game.frozen && document.visibilityState === 'visible';
+  const next = governor.sample(realDt, live, currentQuality);
+  if (!next) return;
+  data.autoQualityCap = next;
+  saveNow(data);
+  applyQuality();
+  const tier = next === 'low'
+    ? t('screens.settings.qualityLow', 'LOW')
+    : t('screens.settings.qualityMedium', 'MEDIUM');
+  screens.toast('◐', t('main.autoQuality.title', 'Graphics adjusted'),
+    t('main.autoQuality.sub', 'Lowered to {tier} to keep play smooth · change in Settings', { tier }));
+}
+
 /* -------------------------------------------------------------------------- */
 /* Loop                                                                        */
 /* -------------------------------------------------------------------------- */
@@ -652,9 +768,11 @@ function frame(now: number) {
 }
 
 function stepFrame(now: number) {
-  const rawDt = Math.min(0.1, (now - last) / 1000);
+  const realDt = (now - last) / 1000;
+  const rawDt = Math.min(0.1, realDt);
   last = now;
   fpsSmoothed += (1 / Math.max(1e-4, rawDt) - fpsSmoothed) * 0.06;
+  governQuality(realDt);
 
   updateOrientationGate();
 
@@ -701,7 +819,12 @@ function stepFrame(now: number) {
       ctx.scale(renderer.dpr, renderer.dpr);
       hud.draw(ctx, game, renderer.width, renderer.height, fpsSmoothed);
       if (touchMode && state === 'playing') {
+        touchHud.hintArea = hud.hintArea;
         touchHud.draw(ctx, game, touch, renderer.width, renderer.height);
+        // After touchHud: tips point at its drawer/arrows, and read button
+        // taps before endFrame clears them.
+        coach.update(rawDt, game, touch, touchHud, renderer.width, renderer.height);
+        coach.draw(ctx, game, touch, touchHud, renderer.width, renderer.height);
       }
       ctx.restore();
     }
@@ -786,7 +909,7 @@ setTimeout(() => {
 // live run from devtools. Stripped from production builds by the DEV guard.
 if (import.meta.env.DEV) {
   (window as unknown as { swarm: unknown }).swarm = {
-    game, renderer, hud, touchHud, screens, audio,
+    game, renderer, hud, touchHud, coach, screens, audio,
     keyboard, touch,
     get input() { return activeInput(); },
     get touchMode() { return touchMode; },

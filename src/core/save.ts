@@ -1,3 +1,4 @@
+import type { Quality } from './platform';
 import type { SfxName } from './audio';
 
 /**
@@ -57,7 +58,14 @@ export interface SaveData {
   /** Endless personal best: sector index → highest wave reached. */
   endlessBest: Record<string, number>;
   /** Shown once, right before the player's first deployment. */
-  tutorialSeen: boolean;
+  /** Touch coach tips already shown/learned — see render/coach.ts. */
+  coachDone: string[];
+  /**
+   * Ceiling the frame-rate governor learned for 'auto' quality on this device
+   * (see core/autoQuality.ts), so a slow phone doesn't re-stutter every boot.
+   * Cleared whenever the player changes the quality setting themselves.
+   */
+  autoQualityCap: Quality | null;
   stats: {
     runs: number;
     victories: number;
@@ -113,7 +121,8 @@ export function emptySave(): SaveData {
     relicUpgrades: {},
     relicsEarned: 0,
     endlessBest: {},
-    tutorialSeen: false,
+    coachDone: [],
+    autoQualityCap: null,
     stats: {
       runs: 0, victories: 0, kills: 0, bossKills: 0, oreMined: 0,
       essenceCollected: 0, buildingsBuilt: 0, wavesSurvived: 0,
@@ -135,7 +144,9 @@ export function loadSave(): SaveData {
   try {
     const raw = readStorage(KEY);
     if (!raw) return emptySave();
-    const parsed = JSON.parse(raw) as Partial<SaveData>;
+    // `tutorialSeen` is from saves before the touch coach replaced the
+    // up-front legend; it's read once below and deliberately not carried over.
+    const { tutorialSeen, ...parsed } = JSON.parse(raw) as Partial<SaveData> & { tutorialSeen?: boolean };
     const base = emptySave();
     // Shallow-merge each section so new fields added in later versions appear.
     return {
@@ -146,6 +157,9 @@ export function loadSave(): SaveData {
       relicUpgrades: { ...base.relicUpgrades, ...(parsed.relicUpgrades ?? {}) },
       endlessBest: { ...base.endlessBest, ...(parsed.endlessBest ?? {}) },
       unlocked: parsed.unlocked ?? [],
+      // Players who already sat through the old up-front legend know how to
+      // move and open the drawer; they still get the tips for newer gestures.
+      coachDone: parsed.coachDone ?? (tutorialSeen ? ['move', 'build'] : []),
       stats: { ...base.stats, ...(parsed.stats ?? {}) },
       settings: { ...base.settings, ...(parsed.settings ?? {}) },
     };
