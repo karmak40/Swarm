@@ -47,9 +47,24 @@ export class PresentationSystem {
    * of the fight happened off-screen. Desktop keeps its wheel-driven zoom.
    */
   get touchZoom() {
+    return Math.max(this.fitZoom * this.touchZoomMul, this.mapFillZoom);
+  }
+
+  /** The default touch zoom, before any pinch. */
+  private get fitZoom() {
     const shortSide = Math.min(this.viewportW, this.viewportH);
-    const fit = clamp(shortSide / (TOUCH_VIEW_TILES * TILE), TOUCH_MIN_ZOOM, 1);
-    return fit * this.touchZoomMul;
+    return clamp(shortSide / (TOUCH_VIEW_TILES * TILE), TOUCH_MIN_ZOOM, 1);
+  }
+
+  /**
+   * Smallest zoom at which the map still covers the whole screen. Zooming out
+   * past it only adds empty space beyond the map edge (in portrait, bands
+   * above and below it) and nothing more of the map, so pinch stops here.
+   */
+  private get mapFillZoom() {
+    const world = this.game.world;
+    if (!world) return 0;
+    return Math.max(this.viewportW / world.pxW, this.viewportH / world.pxH);
   }
 
   /**
@@ -61,7 +76,11 @@ export class PresentationSystem {
 
   /** Applies a pinch factor. Immediate — the view tracks the fingers. */
   zoomBy(factor: number) {
-    this.touchZoomMul = clamp(this.touchZoomMul * factor, PINCH_MIN, PINCH_MAX);
+    // Floor the multiplier at the map-fill zoom too, so pinching past the
+    // edge doesn't bank a deficit the player has to pinch back through
+    // before anything moves.
+    const lo = Math.max(PINCH_MIN, this.mapFillZoom / this.fitZoom);
+    this.touchZoomMul = clamp(this.touchZoomMul * factor, lo, Math.max(PINCH_MAX, lo));
     this.camera.zoom = this.touchZoom;
   }
 

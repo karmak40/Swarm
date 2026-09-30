@@ -5,19 +5,22 @@ import { saveNow, clearRun } from './core/save';
 import { LEVELS, type LevelDef } from './data/levels';
 import { achievementName, achievementDesc } from './data/achievements';
 import { levelName } from './data/levels';
+import { ENEMIES } from './data/enemies';
 import type { TechCard } from './data/tech';
 import type { BuildingKind } from './data/buildings';
 import { Game, type GameMode } from './game/game';
+import { TILE } from './game/world';
 import { Hud } from './render/hud';
 import { Renderer } from './render/renderer';
 import { Screens, type ResumeInfo } from './ui/screens';
 import { TouchInput } from './core/touch';
 import { TouchHud } from './render/touchHud';
 import { Coach } from './render/coach';
-import { detectCoarsePointer, detectQuality, isPortrait, type Quality } from './core/platform';
+import { allowsLandscape, detectCoarsePointer, deviceUiScale, detectQuality, isPortrait, type Quality } from './core/platform';
 import { QualityGovernor, minQuality } from './core/autoQuality';
+import { HapticDirector } from './core/haptics';
 import { detectLocale, setLocale, getLocale, t } from './core/i18n';
-import { hideStatusBar, lockOrientation, onBackButton, minimizeApp } from './core/native';
+import { hideStatusBar, isNativeShell, lockOrientation, onBackButton, minimizeApp } from './core/native';
 
 /**
  * Application shell.
@@ -34,6 +37,11 @@ const renderer = new Renderer(canvas);
 const hud = new Hud();
 const touchHud = new TouchHud();
 const game = new Game();
+/** World-event vibration, rate-limited so a mauled core can't buzz non-stop. */
+const haptics = new HapticDirector(
+  (pattern) => { navigator.vibrate?.(pattern); },
+  () => performance.now() / 1000,
+);
 const coach = new Coach(() => game.progress.data.coachDone, () => saveNow(game.progress.data));
 
 /* -------------------------------------------------------------------------- */
@@ -65,7 +73,7 @@ function applyControlScheme() {
   const st = game.progress.data.settings;
   document.body.classList.toggle('touch', touchMode);
   hud.compact = touchMode;
-  hud.uiScale = st.uiScale;
+  hud.uiScale = uiScale();
   hud.insets = renderer.insets;
   // Touch has no cursor to aim with, so this one is mandatory there; mining now
   // has a real touch gesture (hold near a seam, see TouchInput.mouseDown(2)),
@@ -74,7 +82,8 @@ function applyControlScheme() {
   game.autoMine = st.autoMine;
   game.touchUi = touchMode;
   touch.setHaptics(st.haptics);
-  touch.layout(renderer.width, renderer.height, { southpaw: st.southpaw, scale: st.uiScale, insets: renderer.insets });
+  haptics.enabled = touchMode && st.haptics;
+  touch.layout(renderer.width, renderer.height, { southpaw: st.southpaw, scale: uiScale(), insets: renderer.insets });
   if (!touchMode) touch.reset();
 }
 
@@ -83,6 +92,16 @@ const governor = new QualityGovernor();
 /** The tier actually in use, after 'auto' and any learned ceiling. */
 let currentQuality: Quality = 'high';
 let lastQualityPref: string | null = null;
+
+/**
+ * Interface scale actually used: the player's setting, times a size boost on
+ * tablets (touch only — desktop HUD layout is its own thing), capped so the
+ * two together stay a sane size.
+ */
+function uiScale(): number {
+  const st = game.progress.data.settings;
+  return Math.min(2, st.uiScale * (touchMode ? deviceUiScale() : 1));
+}
 
 function applyQuality() {
   const data = game.progress.data;
@@ -103,7 +122,7 @@ function applyQuality() {
   hud.insets = renderer.insets;
   touch.layout(renderer.width, renderer.height, {
     southpaw: game.progress.data.settings.southpaw,
-    scale: game.progress.data.settings.uiScale,
+    scale: uiScale(),
     insets: renderer.insets,
   });
 }
@@ -241,6 +260,13 @@ function beginLevel(index: number | LevelDef, fresh: boolean, mode: GameMode = '
 }
 
 game.onPhaseChange = (phase) => {
+  // The title screen's backdrop runs a throwaway level; only a real run buzzes.
+  if (runActive) {
+    if (phase === 'incoming') haptics.fire('waveStart');
+    else if (phase === 'boss') haptics.fire('boss');
+    else if (phase === 'lost') haptics.fire('defeat');
+    else if (phase === 'won') haptics.fire('victory');
+  }
   if (phase === 'won') {
     state = 'modal';
     const isFinal = game.levelIndex >= LEVELS.length - 1;
@@ -254,7 +280,7 @@ game.onPhaseChange = (phase) => {
 
 game.onDraft = (cards) => {
   state = 'modal';
-  screens.showDraft(cards);
+  screens.showDraft(cards, game.techTaken);
 };
 
 /* -------------------------------------------------------------------------- */
@@ -267,7 +293,7 @@ function overHud(x: number, y: number): boolean {
   if (y < 116) return true;                       // top bar + wave tracker
   if (y > h - 142) return true;                   // section tabs + build bar + legend
   if (x > w - 200 && y > h - 200) return true;    // minimap
-  if (x < 210 && y > h - 230) return true;        // status rail
+  if (x < 210 && y > h - 260) return true;        // status rail
   return false;
 }
 
@@ -322,6 +348,38 @@ function togglePause() {
   }
 }
 
+/**
+ * One step "back", shared by Escape and the Android back button: closes the
+ * innermost transient thing first — a confirm prompt, the structure menu,
+ * the build drawer, a pending placement — and only then toggles pause.
+ * Returns false when nothing was open and the caller should decide.
+ */
+function backOut(): boolean {
+  if (screens.dismissConfirm()) return true;
+  // A screen with its own Back/Close (settings, achievements, loadout, how to
+  // play, level select, …) goes where that button goes — from the pause
+  // menu, that's back to the pause menu rather than straight into play.
+  if (screens.goBack()) return true;
+  if (state !== 'playing') return false;
+  if (touchHud.menu) {
+    touchHud.closeMenu();
+    audio.play('uiBack');
+    return true;
+  }
+  if (touch.drawerOpen) {
+    touch.drawerOpen = false;
+    audio.play('uiBack');
+    return true;
+  }
+  if (game.cursorMode !== 'normal') {
+    game.buildKind = null;
+    game.cursorMode = 'normal';
+    audio.play('uiBack');
+    return true;
+  }
+  return false;
+}
+
 /** Also reachable from the pause menu — this is the direct-from-play shortcut. */
 function openLoadout() {
   if (state !== 'playing') return;
@@ -332,7 +390,7 @@ function openLoadout() {
 }
 
 addEventListener('keydown', (e) => {
-  if (e.code === 'Escape') togglePause();
+  if (e.code === 'Escape' && !backOut()) togglePause();
   if (e.code === 'KeyG') openLoadout();
   if (e.code === 'Tab') {
     e.preventDefault();
@@ -346,28 +404,33 @@ addEventListener('keydown', (e) => {
   }
 });
 
+// The native manifests no longer pin orientation (tablets may rotate), so
+// phones get their portrait lock at launch — natively it needs no gesture,
+// unlike the web API, which tryFullscreen() covers on the first tap.
+if (isNativeShell()) void lockOrientation();
+
 // Android hardware/gesture back button — a no-op listener registration on
 // web and iOS, since neither platform has an equivalent event.
 void onBackButton(() => {
+  if (backOut()) return;
   if (state === 'playing' || state === 'paused') {
     togglePause();
   } else if (screens.current === null || screens.current === 'title') {
     void minimizeApp();
   }
-  // Any other modal screen (settings, achievements, level select, …): swallow
-  // the press rather than guess a destination. Several of their own "Back"
-  // buttons return to the title screen regardless of how they were opened,
-  // so mirroring that via hardware back risks quietly abandoning a run that
-  // was only paused to open, say, Settings.
+  // Screens with a Back button were handled by backOut(); what's left (the
+  // briefing, the tech draft, results) has no way back, so swallow the press.
 });
 
 function onViewportChange() {
   renderer.resize();
   game.setViewport(renderer.width, renderer.height);
   hud.insets = renderer.insets;
+  // The tablet boost depends on the window size, so it's re-read here too.
+  hud.uiScale = uiScale();
   touch.layout(renderer.width, renderer.height, {
     southpaw: game.progress.data.settings.southpaw,
-    scale: game.progress.data.settings.uiScale,
+    scale: uiScale(),
     insets: renderer.insets,
   });
   updateOrientationGate();
@@ -396,6 +459,17 @@ document.addEventListener('visibilitychange', () => {
 /* -------------------------------------------------------------------------- */
 /* Touch routing                                                              */
 /* -------------------------------------------------------------------------- */
+
+/** The structure under a screen point, if any. Shake left out, as for aiming. */
+function buildingAtScreen(x: number, y: number) {
+  const cam = game.camera;
+  const wx = cam.x + (x - renderer.width / 2) / cam.zoom;
+  const wy = cam.y + (y - renderer.height / 2) / cam.zoom;
+  return game.buildingAtTile(Math.floor(wx / TILE), Math.floor(wy / TILE));
+}
+// Lets a still thumb in the stick zone long-press the structure under it
+// (see TouchInput.longPressTarget) without stalling ordinary movement.
+touch.longPressTarget = (x, y) => buildingAtScreen(x, y) !== null;
 
 /** Structures placed by dragging a finger along the map, without ✓. */
 const DRAG_PLACED = new Set<BuildingKind>(['wall']);
@@ -445,6 +519,7 @@ function syncTouchButtons() {
   const confirming = !drawer && touch.placing && touch.confirmPlacement;
   touch.setVisible('dash', !drawer);
   touch.setVisible('build', !drawer);
+  touch.setVisible('strike', !drawer);
   touch.setVisible('confirm', confirming);
   // The "start wave" button only exists while a build window is open, and
   // gives its slot to ✓ while a placement is pending.
@@ -458,6 +533,7 @@ function handleTouch() {
   const st = game.progress.data.settings;
 
   touch.drawerOpen = touch.drawerOpen && !screens.isModal;
+  touch.menuOpen = touchHud.menu !== null;
   touch.placing = game.cursorMode === 'build' && game.buildKind !== null;
   touchHud.lastWidth = renderer.width;
   anchorGhost();
@@ -497,9 +573,27 @@ function handleTouch() {
         } else {
           touch.drawerOpen = true;
           touchHud.drawerInfo = null;
+          // Opening the drawer drops strike aiming — one mode at a time.
+          if (game.cursorMode === 'strike') game.cursorMode = 'normal';
         }
         touchHud.closeMenu();
         audio.play('uiClick');
+        break;
+      case 'strike':
+        // Arms aiming; the next map tap lands it (Game.updateInteraction).
+        // Pressed again while aiming, it backs out.
+        if (game.cursorMode === 'strike') {
+          game.cursorMode = 'normal';
+          audio.play('uiBack');
+        } else if (game.strike.ready) {
+          game.buildKind = null;
+          game.cursorMode = 'strike';
+          touch.drawerOpen = false;
+          touchHud.closeMenu();
+          audio.play('uiClick');
+        } else {
+          game.strike.explainNotReady();
+        }
         break;
       case 'startWave':
         // Reuse the same path the SPACE key takes.
@@ -508,6 +602,9 @@ function handleTouch() {
       case 'map':
         hud.showMinimap = !hud.showMinimap;
         audio.play('uiClick');
+        break;
+      case 'speed':
+        game.toggleSpeed();
         break;
       case 'dash':
       case 'confirm':
@@ -525,8 +622,12 @@ function handleTouch() {
     // Long-press a drawer slot for its details; a tap still builds.
     const kind = touchHud.hitDrawer(lp.x, lp.y);
     if (kind) { touchHud.drawerInfo = kind; audio.play('uiClick'); }
-  } else if (lp) {
-    if (game.hoverBuilding) touchHud.openMenu(lp.x, lp.y, game.hoverBuilding);
+  } else if (lp && game.cursorMode !== 'strike') {
+    // Resolved at the press point itself, not `game.hoverBuilding`: a long
+    // press out of the stick zone moves the aim point only as it fires, so
+    // hover (computed during the last update) can still be a frame behind.
+    const b = buildingAtScreen(lp.x, lp.y);
+    if (b) touchHud.openMenu(lp.x, lp.y, b);
     else touchHud.closeMenu();
   }
 
@@ -539,7 +640,9 @@ function handleTouch() {
         // The structure captured when the menu opened — hover has already
         // moved to wherever this tap landed.
         const b = touchHud.menuTarget;
-        let keepOpen = hit === 'repair' || hit === 'target';
+        // Upgrades keep the menu up: level 2 shows the fork next, level 3 the new header.
+        let keepOpen = hit === 'repair' || hit === 'target'
+          || hit === 'upgrade' || hit === 'rapid' || hit === 'range';
         if (hit === 'sell' && b) {
           // First tap arms, second sells — see TouchHud.sellArmed.
           if (touchHud.sellArmed) game.sellBuilding(b);
@@ -549,6 +652,8 @@ function handleTouch() {
           touchHud.disarmSell();
           if (hit === 'repair' && b) game.repairBuildingBurst(b);
           else if (hit === 'target' && b) game.cycleTargeting(b);
+          else if (hit === 'upgrade' && b) game.upgradeBuilding(b);
+          else if ((hit === 'rapid' || hit === 'range') && b) game.upgradeBuilding(b, hit);
         }
         if (!keepOpen) touchHud.closeMenu();
         audio.play('uiClick');
@@ -608,7 +713,8 @@ let gateBlocked = false;
  * game look broken. The check is two number comparisons, so polling is free.
  */
 function updateOrientationGate() {
-  const block = touchMode && !isPortrait();
+  // Phones are portrait-only; tablets may play either way up.
+  const block = touchMode && !isPortrait() && !allowsLandscape();
   if (block === gateBlocked) return;
   gateBlocked = block;
   document.body.classList.toggle('portrait-block', block);
@@ -748,6 +854,65 @@ function governQuality(realDt: number) {
     t('main.autoQuality.sub', 'Lowered to {tier} to keep play smooth · change in Settings', { tier }));
 }
 
+/** The plan whose new types were last checked — once per upcoming wave. */
+let introPlan: unknown = null;
+
+/**
+ * New-enemy cards: during a build phase, if the next wave brings hive types
+ * the player hasn't met, pause and introduce them (Screens.showEnemyIntro) —
+ * while there's still time to build for them. Types that only ever appear
+ * mid-fight (boss spawns, split pieces) are catalogued silently instead, so
+ * the bestiary fills in without pausing a boss battle.
+ */
+function checkNewEnemies() {
+  if (!runActive || state !== 'playing' || screens.isModal) return;
+  const seen = game.progress.data.seenEnemies;
+
+  for (const e of game.enemies) {
+    if (!e.dead && !seen.includes(e.def.id)) seen.push(e.def.id);
+  }
+
+  const plan = game.nextPlan;
+  if (!game.inBuildPhase || !plan || plan === introPlan) return;
+  introPlan = plan;
+  const fresh = [...new Set(plan.orders.map((o) => o.enemyId))]
+    .filter((id) => ENEMIES[id] && !seen.includes(id));
+  if (!fresh.length) return;
+  seen.push(...fresh);
+  saveNow(game.progress.data);
+  state = 'modal';
+  game.frozen = true;
+  screens.showEnemyIntro(fresh.map((id) => ENEMIES[id]), () => { state = 'playing'; game.frozen = false; });
+}
+
+/** Core seen last frame, and its hp then — a new core (new level) resets both. */
+let coreSeen: typeof game.core | null = null;
+let coreHpSeen = 0;
+/** The "core critical" cue fires once per dip below 35%, re-armed above 50%. */
+let coreCriticalArmed = true;
+
+/**
+ * Buzzes when the core takes damage — any drop in its hp since last frame.
+ * HapticDirector's cooldowns turn a steady stream of hits into an occasional
+ * nudge, so this can report every hit without worrying about spam.
+ */
+function watchCoreHaptics() {
+  const c = game.core;
+  if (c !== coreSeen) {
+    coreSeen = c;
+    coreHpSeen = c.hp;
+    coreCriticalArmed = true;
+    return;
+  }
+  if (c.hp < coreHpSeen - 0.01) haptics.fire('coreHit');
+  if (c.pct < 0.35) {
+    if (coreCriticalArmed && haptics.fire('coreCritical')) coreCriticalArmed = false;
+  } else if (c.pct > 0.5) {
+    coreCriticalArmed = true;
+  }
+  coreHpSeen = c.hp;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Loop                                                                        */
 /* -------------------------------------------------------------------------- */
@@ -809,9 +974,11 @@ function stepFrame(now: number) {
   if (modal && touchMode) touch.reset();
 
   handleTouch();
+  checkNewEnemies();
 
   if (runActive) {
     game.update(rawDt, input);
+    if (state === 'playing') watchCoreHaptics();
     renderer.render(game, game.progress.data.settings.bloom);
     if (state === 'playing' || state === 'paused') {
       const ctx = renderer.ctx;
@@ -820,6 +987,8 @@ function stepFrame(now: number) {
       hud.draw(ctx, game, renderer.width, renderer.height, fpsSmoothed);
       if (touchMode && state === 'playing') {
         touchHud.hintArea = hud.hintArea;
+        touchHud.hintAreaWide = hud.hintAreaWide;
+        touchHud.bannerBand = hud.bannerBand;
         touchHud.draw(ctx, game, touch, renderer.width, renderer.height);
         // After touchHud: tips point at its drawer/arrows, and read button
         // taps before endFrame clears them.
@@ -917,7 +1086,7 @@ if (import.meta.env.DEV) {
       game.progress.data.settings.controls = on ? 'touch' : 'desktop';
       applyControlScheme();
     },
-    applyQuality, applyControlScheme,
+    applyQuality, applyControlScheme, backOut,
   };
 }
 

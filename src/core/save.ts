@@ -60,6 +60,8 @@ export interface SaveData {
   /** Shown once, right before the player's first deployment. */
   /** Touch coach tips already shown/learned — see render/coach.ts. */
   coachDone: string[];
+  /** Hive types the player has been introduced to (new-enemy card, bestiary). */
+  seenEnemies: string[];
   /**
    * Ceiling the frame-rate governor learned for 'auto' quality on this device
    * (see core/autoQuality.ts), so a slow phone doesn't re-stutter every boot.
@@ -122,6 +124,7 @@ export function emptySave(): SaveData {
     relicsEarned: 0,
     endlessBest: {},
     coachDone: [],
+    seenEnemies: [],
     autoQualityCap: null,
     stats: {
       runs: 0, victories: 0, kills: 0, bossKills: 0, oreMined: 0,
@@ -160,6 +163,8 @@ export function loadSave(): SaveData {
       // Players who already sat through the old up-front legend know how to
       // move and open the drawer; they still get the tips for newer gestures.
       coachDone: parsed.coachDone ?? (tutorialSeen ? ['move', 'build'] : []),
+      // Veterans already know the opening pair; everything else still gets its card.
+      seenEnemies: parsed.seenEnemies ?? ((parsed.stats?.runs ?? 0) > 0 ? ['crawler', 'mite'] : []),
       stats: { ...base.stats, ...(parsed.stats ?? {}) },
       settings: { ...base.settings, ...(parsed.settings ?? {}) },
     };
@@ -248,7 +253,10 @@ export interface RunSnapshot {
   weaponsOwned: string[];
   weapon: string;
   armorTier: number;
-  buildings: { k: string; tx: number; ty: number; hp: number }[];
+  /** `lv`/`br`: turret upgrade level and level-3 branch (absent = level 1; older saves). */
+  buildings: { k: string; tx: number; ty: number; hp: number; lv?: number; br?: string }[];
+  /** Orbital strike charge in kill points (absent in older saves = empty). */
+  strike?: number;
   /** Remaining ore per seam, in world.nodes order. */
   nodes: number[];
   stats: {

@@ -14,6 +14,14 @@ import {
   WEAPON_KINDS, WEAPONS, weaponName, weaponDesc, ARMOR_TIERS, armorTierName,
 } from '../data/loadout';
 import { techName, techDesc, type TechCard } from '../data/tech';
+import {
+  SYNERGIES, SYNERGY_TAGS, synergyCounts, synergyName, synergyTitle, tierBonusText, tiersReached,
+  type SynergyTag,
+} from '../data/synergies';
+import { css } from '../render/palette';
+import { enemyPortrait } from '../render/portrait';
+import { enemyCounter, enemyTraits } from '../data/bestiary';
+import { ENEMIES, enemyDesc, enemyName, type EnemyDef } from '../data/enemies';
 import type { Game } from '../game/game';
 import type { Progress } from '../game/progress';
 import { detectLocale, setLocale, LOCALES, type LocaleCode, t as tr } from '../core/i18n';
@@ -29,7 +37,7 @@ import { detectLocale, setLocale, LOCALES, type LocaleCode, t as tr } from '../c
 type ScreenName =
   | 'boot' | 'title' | 'levelSelect' | 'achievements' | 'settings'
   | 'briefing' | 'pause' | 'draft' | 'victory' | 'defeat' | 'campaignEnd' | 'armoury'
-  | 'endlessSelect' | 'customBattle' | 'loadout' | 'tutorial' | null;
+  | 'endlessSelect' | 'customBattle' | 'loadout' | 'tutorial' | 'enemyIntro' | 'bestiary' | null;
 
 /** Minimal shape the title screen needs to advertise a resumable run. */
 export interface ResumeInfo {
@@ -109,13 +117,31 @@ export class Screens {
   private clear() {
     this.layer.innerHTML = '';
     this.layer.style.pointerEvents = 'none';
+    this.backAction = null;
   }
 
-  private open(name: ScreenName, node: HTMLElement) {
+  /**
+   * What the open screen's own Back/Close button does, so Escape and the
+   * Android back button can do exactly the same. Null for screens with no
+   * way back (briefing, tech draft, results, the pause menu itself).
+   */
+  private backAction: (() => void) | null = null;
+
+  private open(name: ScreenName, node: HTMLElement, back?: () => void) {
     this.clear();
     this.current = name;
     this.layer.style.pointerEvents = 'auto';
     this.layer.appendChild(node);
+    this.backAction = back ?? null;
+  }
+
+  /** Runs the open screen's Back action. Returns false if it has none. */
+  goBack(): boolean {
+    const back = this.backAction;
+    if (!back) return false;
+    audio.play('uiBack');
+    back();
+    return true;
   }
 
   close() {
@@ -145,6 +171,18 @@ export class Screens {
     // A tap outside the box backs out, same as Cancel.
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
     this.layer.appendChild(overlay);
+  }
+
+  /**
+   * Closes an open confirmDialog as if Cancel was pressed. Returns whether
+   * there was one — hardware back / Escape back out of it before anything else.
+   */
+  dismissConfirm(): boolean {
+    const overlay = this.layer.querySelector('.confirm-overlay');
+    if (!overlay) return false;
+    overlay.remove();
+    audio.play('uiBack');
+    return true;
   }
 
   private button(label: string, onClick: () => void, cls = 'btn') {
@@ -330,6 +368,12 @@ export class Screens {
         { unlocked: progress.unlockedCount, total: progress.totalCount }),
       () => this.showAchievements(progress), 'btn ghost',
     ));
+    col.appendChild(this.button(
+      tr('screens.title.bestiary', 'Bestiary · {n}/{total}', {
+        n: progress.data.seenEnemies.length, total: Object.keys(ENEMIES).length,
+      }),
+      () => this.showBestiary(progress), 'btn ghost',
+    ));
     col.appendChild(this.button(tr('screens.title.settings', 'Settings'), () => this.showSettings(progress), 'btn ghost'));
     stack.appendChild(col);
 
@@ -432,7 +476,7 @@ export class Screens {
     stack.appendChild(row);
     stack.appendChild(this.button(tr('screens.levelSelect.back', 'Back'), () => this.showTitle(progress), 'btn ghost'));
     s.appendChild(stack);
-    this.open('levelSelect', s);
+    this.open('levelSelect', s, () => this.showTitle(progress));
   }
 
   /* ====================================================================== */
@@ -558,7 +602,7 @@ export class Screens {
     stack.appendChild(btnRow);
 
     s.appendChild(stack);
-    this.open('armoury', s);
+    this.open('armoury', s, () => this.showTitle(progress));
   }
 
   /* ====================================================================== */
@@ -601,7 +645,7 @@ export class Screens {
     stack.appendChild(row);
     stack.appendChild(this.button(tr('screens.endlessSelect.back', 'Back'), () => this.showTitle(progress), 'btn ghost'));
     s.appendChild(stack);
-    this.open('endlessSelect', s);
+    this.open('endlessSelect', s, () => this.showTitle(progress));
   }
 
   /* ====================================================================== */
@@ -669,14 +713,15 @@ export class Screens {
     stack.appendChild(col);
 
     s.appendChild(stack);
-    this.open('customBattle', s);
+    this.open('customBattle', s, () => this.showTitle(progress));
   }
 
   /* ====================================================================== */
   /* Achievements                                                            */
   /* ====================================================================== */
 
-  showAchievements(progress: Progress, backTo: 'title' | 'pause' = 'title', game?: Game) {
+  /** `onBack` defaults to the title screen; the pause menu passes its own way back. */
+  showAchievements(progress: Progress, onBack: () => void = () => this.showTitle(progress)) {
     const s = el('div', 'screen opaque');
     const stack = el('div', 'stack');
     stack.appendChild(el('h2', undefined, tr('screens.achievements.heading', 'Achievements')));
@@ -730,19 +775,20 @@ export class Screens {
 
     wrap.appendChild(grid);
     stack.appendChild(wrap);
-    stack.appendChild(this.button(tr('screens.achievements.back', 'Back'), () => {
-      if (backTo === 'pause' && game) this.showPause(game, true);
-      else this.showTitle(progress);
-    }, 'btn ghost'));
+    stack.appendChild(this.button(tr('screens.achievements.back', 'Back'), onBack, 'btn ghost'));
     s.appendChild(stack);
-    this.open('achievements', s);
+    this.open('achievements', s, onBack);
   }
 
   /* ====================================================================== */
   /* Settings                                                                */
   /* ====================================================================== */
 
-  showSettings(progress: Progress) {
+  /**
+   * `onBack` defaults to the title screen. Opened from the pause menu it
+   * returns there — it used to go to the title even mid-run.
+   */
+  showSettings(progress: Progress, onBack: () => void = () => this.showTitle(progress)) {
     const s = el('div', 'screen opaque');
     const stack = el('div', 'stack');
     stack.appendChild(el('h2', undefined, tr('screens.settings.heading', 'Settings')));
@@ -820,7 +866,7 @@ export class Screens {
         setLocale(v === 'auto' ? detectLocale() : v);
         this.cb.onSettingChange();
         // Every label on this very screen needs to redraw in the new language.
-        this.showSettings(progress);
+        this.showSettings(progress, onBack);
       },
     ));
 
@@ -876,7 +922,7 @@ export class Screens {
     stack.appendChild(panel);
 
     const row = el('div', 'row');
-    row.appendChild(this.button(tr('screens.settings.back', 'Back'), () => this.showTitle(progress), 'btn ghost'));
+    row.appendChild(this.button(tr('screens.settings.back', 'Back'), onBack, 'btn ghost'));
     row.appendChild(this.button(tr('screens.settings.wipeSave', 'Wipe save'), () => {
       this.confirmDialog(tr('screens.settings.wipeSaveConfirm',
         'Erase all achievements, unlocks and lifetime stats? This cannot be undone.'), () => {
@@ -887,7 +933,7 @@ export class Screens {
     stack.appendChild(row);
 
     s.appendChild(stack);
-    this.open('settings', s);
+    this.open('settings', s, onBack);
   }
 
   /* ====================================================================== */
@@ -960,6 +1006,8 @@ export class Screens {
     const s = el('div', 'screen');
     const stack = el('div', 'stack');
     stack.appendChild(el('h2', undefined, tr('screens.pause.heading', 'Paused')));
+    // Build so far — how close each tech synergy is.
+    if (game.techTaken.length) stack.appendChild(this.synergySummary(game.techTaken));
     const col = el('div', 'menu-col');
     col.appendChild(this.button(tr('screens.pause.resume', 'Resume'), () => { this.close(); this.cb.onResume(); }));
     col.appendChild(this.button(tr('screens.pause.loadout', 'Loadout'),
@@ -969,8 +1017,13 @@ export class Screens {
       col.appendChild(this.button(tr('screens.pause.howToPlay', 'How to play'),
         () => this.showTutorial(() => this.showPause(game, canSave)), 'btn ghost'));
     }
-    col.appendChild(this.button(tr('screens.pause.achievements', 'Achievements'), () => this.showAchievements(progress, 'pause', game), 'btn ghost'));
-    col.appendChild(this.button(tr('screens.pause.settings', 'Settings'), () => this.showSettings(progress), 'btn ghost'));
+    const backToPause = () => this.showPause(game, canSave);
+    col.appendChild(this.button(tr('screens.pause.achievements', 'Achievements'),
+      () => this.showAchievements(progress, backToPause), 'btn ghost'));
+    col.appendChild(this.button(tr('screens.pause.bestiary', 'Bestiary'),
+      () => this.showBestiary(progress, backToPause), 'btn ghost'));
+    col.appendChild(this.button(tr('screens.pause.settings', 'Settings'),
+      () => this.showSettings(progress, backToPause), 'btn ghost'));
     col.appendChild(this.button(tr('screens.pause.restartSector', 'Restart sector'), () => {
       this.confirmDialog(tr('screens.pause.restartConfirm', 'Restart this sector from wave 1?'),
         () => this.cb.onRestart(), tr('screens.pause.restartSector', 'Restart sector'));
@@ -1092,22 +1145,28 @@ export class Screens {
     refreshWallet();
     for (const r of rows) r();
 
-    stack.appendChild(this.button(tr('screens.loadout.close', 'Close'), () => { this.close(); onClose(); }, 'btn ghost'));
+    const close = () => { this.close(); onClose(); };
+    stack.appendChild(this.button(tr('screens.loadout.close', 'Close'), close, 'btn ghost'));
     s.appendChild(stack);
-    this.open('loadout', s);
+    this.open('loadout', s, close);
   }
 
   /* ====================================================================== */
   /* Tech draft                                                              */
   /* ====================================================================== */
 
-  showDraft(cards: TechCard[]) {
+  /** `techTaken`: the run's picks so far, for the synergy progress on each card. */
+  showDraft(cards: TechCard[], techTaken: readonly string[] = []) {
     const s = el('div', 'screen');
     const stack = el('div', 'stack');
     stack.appendChild(el('p', 'subtitle', tr('screens.draft.subtitle', 'field requisition')));
     stack.appendChild(el('h2', undefined, tr('screens.draft.heading', 'Choose an upgrade')));
     stack.appendChild(el('p', 'flavor',
       tr('screens.draft.intro', 'This choice lasts for the rest of the run and carries into the next sector.')));
+
+    // Where each synergy family stands before this pick.
+    const counts = synergyCounts(techTaken);
+    stack.appendChild(this.synergySummary(techTaken));
 
     const row = el('div', 'card-row');
     for (const c of cards) {
@@ -1125,6 +1184,7 @@ export class Screens {
         p.textContent = describePerk(c.perk);
         card.appendChild(p);
       }
+      card.appendChild(this.synergyLine(c, counts));
       card.addEventListener('pointerenter', () => audio.play('uiHover'));
       card.addEventListener('click', () => {
         audio.play('uiClick');
@@ -1136,6 +1196,129 @@ export class Screens {
     stack.appendChild(row);
     s.appendChild(stack);
     this.open('draft', s);
+  }
+
+  /**
+   * One chip per synergy family: picks toward the next tier ("Arsenal 2/3"),
+   * lit once a tier is on, ✓ when the set is complete.
+   */
+  private synergySummary(techTaken: readonly string[]): HTMLElement {
+    const counts = synergyCounts(techTaken);
+    const summary = el('div', 'synergy-summary');
+    for (const tag of SYNERGY_TAGS) {
+      const def = SYNERGIES[tag];
+      const n = counts[tag];
+      const reached = tiersReached(tag, n);
+      const next = def.tiers[reached];
+      const chip = el('span', 'synergy-chip' + (reached ? ' on' : ''),
+        `${def.glyph} ${synergyName(tag)} ${next ? `${n}/${next.count}` : '✓'}`);
+      chip.style.setProperty('--syn', css(def.color));
+      summary.appendChild(chip);
+    }
+    return summary;
+  }
+
+  /**
+   * The card's synergy family and what picking it does for that set: either
+   * "completes Arsenal I: +10% turret fire rate", or progress toward the next
+   * tier. See data/synergies.ts.
+   */
+  private synergyLine(c: TechCard, counts: Record<SynergyTag, number>): HTMLElement {
+    const def = SYNERGIES[c.tag];
+    const before = counts[c.tag];
+    const after = before + 1;
+    const tierBefore = tiersReached(c.tag, before);
+    const tierAfter = tiersReached(c.tag, after);
+    const box = el('div', 'synergy-line' + (tierAfter > tierBefore ? ' completes' : ''));
+    box.style.setProperty('--syn', css(def.color));
+    box.appendChild(el('div', 'synergy-tag', `${def.glyph} ${synergyName(c.tag)}`));
+    if (tierAfter > tierBefore) {
+      box.appendChild(el('div', 'synergy-text', tr('screens.draft.synergyCompletes', 'Completes {set}: {bonus}', {
+        set: synergyTitle(c.tag, tierAfter), bonus: tierBonusText(c.tag, tierAfter - 1),
+      })));
+    } else {
+      const next = def.tiers[tierBefore];
+      box.appendChild(el('div', 'synergy-text', next
+        ? tr('screens.draft.synergyProgress', '{n} → {m}/{need} for {bonus}', {
+          n: before, m: after, need: next.count, bonus: tierBonusText(c.tag, tierBefore),
+        })
+        : tr('screens.draft.synergyDone', 'Set complete')));
+    }
+    return box;
+  }
+
+  /* ====================================================================== */
+  /* Hive intel: new-enemy card and the bestiary                            */
+  /* ====================================================================== */
+
+  /** One enemy's intel panel: portrait, name, traits, flavour, how to fight it. */
+  private enemyPanel(def: EnemyDef, known = true): HTMLElement {
+    const panel = el('div', 'enemy-panel' + (def.boss ? ' boss' : '') + (known ? '' : ' unknown'));
+    panel.appendChild(enemyPortrait(def, 88, !known));
+    const body = el('div', 'enemy-body');
+    body.appendChild(el('h3', undefined, known ? enemyName(def) : '???'));
+    if (!known) {
+      body.appendChild(el('p', 'enemy-desc', tr('screens.bestiary.unknown', 'Not yet encountered.')));
+      panel.appendChild(body);
+      return panel;
+    }
+    const traits = el('div', 'enemy-traits');
+    for (const tr_ of enemyTraits(def)) traits.appendChild(el('span', 'enemy-trait', tr_));
+    if (traits.childElementCount) body.appendChild(traits);
+    const desc = enemyDesc(def);
+    if (desc) body.appendChild(el('p', 'enemy-desc', desc));
+    const counter = enemyCounter(def);
+    if (counter) {
+      body.appendChild(el('div', 'enemy-counter-label', tr('screens.enemyIntro.howTo', 'How to fight it')));
+      body.appendChild(el('p', 'enemy-counter', counter));
+    }
+    panel.appendChild(body);
+    return panel;
+  }
+
+  /**
+   * Shown during a build phase when the next wave brings types the player
+   * hasn't met: what they are and how to fight them, while there's still
+   * time to build for it (anti-air for fliers, above all).
+   */
+  showEnemyIntro(defs: EnemyDef[], onDone: () => void) {
+    const s = el('div', 'screen');
+    const stack = el('div', 'stack');
+    const boss = defs.some((d) => d.boss);
+    stack.appendChild(el('p', 'subtitle', boss
+      ? tr('screens.enemyIntro.bossSubtitle', 'boss incoming')
+      : tr('screens.enemyIntro.subtitle', 'hive intel')));
+    stack.appendChild(el('h2', undefined, defs.length > 1
+      ? tr('screens.enemyIntro.headingMany', 'New hostiles in the next wave')
+      : tr('screens.enemyIntro.heading', 'New hostile in the next wave')));
+    const list = el('div', 'enemy-list');
+    for (const d of defs) list.appendChild(this.enemyPanel(d));
+    stack.appendChild(list);
+    const done = () => { this.close(); onDone(); };
+    stack.appendChild(this.button(tr('screens.enemyIntro.ok', 'Understood'), done));
+    s.appendChild(stack);
+    this.open('enemyIntro', s, done);
+  }
+
+  /** Every hive type: full intel for those met, a silhouette for the rest. */
+  showBestiary(progress: Progress, onBack: () => void = () => this.showTitle(progress)) {
+    const s = el('div', 'screen opaque');
+    const stack = el('div', 'stack');
+    const seen = new Set(progress.data.seenEnemies);
+    const all = Object.values(ENEMIES);
+    stack.appendChild(el('h2', undefined, tr('screens.bestiary.heading', 'Bestiary')));
+    stack.appendChild(el('p', 'flavor', tr('screens.bestiary.intro',
+      '{n} of {total} hive types catalogued. New ones are added the first time they show up in a wave.',
+      { n: all.filter((d) => seen.has(d.id)).length, total: all.length })));
+    const list = el('div', 'enemy-list');
+    // Regular hive first, bosses last.
+    for (const d of [...all.filter((x) => !x.boss), ...all.filter((x) => x.boss)]) {
+      list.appendChild(this.enemyPanel(d, seen.has(d.id)));
+    }
+    stack.appendChild(list);
+    stack.appendChild(this.button(tr('screens.bestiary.back', 'Back'), onBack, 'btn ghost'));
+    s.appendChild(stack);
+    this.open('bestiary', s, onBack);
   }
 
   /* ====================================================================== */
@@ -1200,13 +1383,11 @@ export class Screens {
     }
     stack.appendChild(list);
 
-    stack.appendChild(this.button(tr('screens.tutorial.back', 'Back'), () => {
-      this.close();
-      onDone();
-    }));
+    const back = () => { this.close(); onDone(); };
+    stack.appendChild(this.button(tr('screens.tutorial.back', 'Back'), back));
 
     s.appendChild(stack);
-    this.open('tutorial', s);
+    this.open('tutorial', s, back);
   }
 
   /* ====================================================================== */

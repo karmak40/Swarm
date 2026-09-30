@@ -21,7 +21,8 @@ export type EnemyBehavior =
 
 export type EnemyShape =
   | 'crawler' | 'mite' | 'brute' | 'spitter' | 'moth'
-  | 'bomber' | 'burrower' | 'shaman' | 'blob' | 'queen' | 'scorpion' | 'wasp' | 'boss';
+  | 'bomber' | 'burrower' | 'shaman' | 'blob' | 'queen' | 'scorpion' | 'wasp' | 'boss'
+  | 'centipede' | 'spider';
 
 export interface EnemyDef {
   id: string;
@@ -64,7 +65,13 @@ export interface EnemyDef {
 }
 
 export interface BossAbility {
-  id: 'slam' | 'spawn' | 'beam' | 'charge' | 'volley' | 'shield';
+  /**
+   * 'burrow': submerge for `value` seconds (untargetable, through walls), then
+   * erupt with a slam. 'shed': spawn `value` segment-lings. 'web': fire `value`
+   * web globs at turrets and the player — webbed turrets stop firing, a webbed
+   * player is slowed (see CombatSystem).
+   */
+  id: 'slam' | 'spawn' | 'beam' | 'charge' | 'volley' | 'shield' | 'burrow' | 'shed' | 'web';
   cooldown: number;
   telegraph: number;
   value: number;
@@ -196,6 +203,37 @@ export const ENEMIES: Record<string, EnemyDef> = {
     ],
     description: 'Shields herself and rakes the field with a searing beam.',
   },
+  scolopendra: {
+    id: 'scolopendra', name: 'SCOLOPENDRA', shape: 'centipede', behavior: 'charger',
+    hp: 8800, speed: 50, radius: 30, armor: 9, damage: 58, attackRate: 0.9, attackRange: 18,
+    ore: 70, essence: 150, xp: 100, color: 0x8a3a1c, accent: 0xff9a3c, cost: 0, boss: true,
+    abilities: [
+      { id: 'charge', cooldown: 8, telegraph: 0.9, value: 560 },
+      { id: 'burrow', cooldown: 13, telegraph: 0.8, value: 2.6 },
+      { id: 'shed', cooldown: 15, telegraph: 1.0, value: 4 },
+    ],
+    description: 'A hundred legs of armour. Rams the line, dives under your walls to erupt behind them, and sheds live segments as it goes.',
+  },
+  centipedeling: {
+    id: 'centipedeling', name: 'Shed Segment', shape: 'centipede', behavior: 'charger',
+    hp: 110, speed: 96, radius: 11, armor: 2, damage: 12, attackRate: 1.2, attackRange: 5,
+    ore: 0, essence: 2, xp: 2, color: 0x8a3a1c, accent: 0xff9a3c, cost: 0,
+    description: 'A severed piece of the Scolopendra that keeps coming.',
+  },
+  weaver: {
+    id: 'weaver', name: 'THE WEAVER', shape: 'spider', behavior: 'ranged',
+    hp: 9500, speed: 38, radius: 40, armor: 10, damage: 40, attackRate: 1.0, attackRange: 280,
+    ore: 80, essence: 170, xp: 120, color: 0x2c2a3a, accent: 0xd8e4ff, cost: 0, boss: true,
+    projectileSpeed: 300, splashRadius: 30,
+    abilities: [
+      // Webs keep a few guns quiet at a time, never the whole line: with 8s
+      // cooldowns and 4 targets she out-webbed the defences entirely.
+      { id: 'web', cooldown: 10, telegraph: 0.8, value: 3 },
+      { id: 'charge', cooldown: 12, telegraph: 0.9, value: 460 },
+      { id: 'spawn', cooldown: 14, telegraph: 1.2, value: 8 },
+    ],
+    description: 'Spins webs across your defences: a webbed turret falls silent, a webbed pilot can barely move.',
+  },
   worldeater: {
     id: 'worldeater', name: 'WORLD-EATER', shape: 'boss', behavior: 'brute',
     hp: 14000, speed: 30, radius: 56, armor: 15, damage: 78, attackRate: 0.6, attackRange: 28,
@@ -213,7 +251,18 @@ export const ENEMIES: Record<string, EnemyDef> = {
   },
 };
 
-export const BOSS_IDS = ['tyrant', 'devourer', 'matriarch', 'worldeater'] as const;
+export const BOSS_IDS = ['tyrant', 'devourer', 'matriarch', 'scolopendra', 'weaver', 'worldeater'] as const;
+
+/**
+ * Elite modifiers. Every elite rolls one at spawn (see EnemySystem.spawnEnemy)
+ * so an elite is a different problem, not just a bigger number:
+ * - shielded: starts behind a shield worth 60% of its hp
+ * - regen: heals quickly once it has gone a moment without being hit
+ * - swift: 45% faster
+ * - volatile: explodes on death, hurting structures and the pilot nearby
+ */
+export type EliteAffix = 'shielded' | 'regen' | 'swift' | 'volatile';
+export const ELITE_AFFIXES: EliteAffix[] = ['shielded', 'regen', 'swift', 'volatile'];
 
 /** Localised display name. English text above is the source of truth and fallback. */
 export function enemyName(def: EnemyDef): string {

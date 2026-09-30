@@ -267,6 +267,50 @@ kbd {
 .tech-card h3 { margin: 0; font-size: 17px; letter-spacing: 0.1em; text-transform: uppercase; }
 .tech-card p { margin: 0; font-size: 13px; line-height: 1.6; color: var(--ink-dim); flex: 1; }
 .tech-card .rarity { font-size: 10px; letter-spacing: 0.24em; text-transform: uppercase; }
+
+/* Hive intel: new-enemy card and bestiary (Screens.enemyPanel). */
+.enemy-list {
+  display: grid; gap: 12px; width: min(760px, 92vw);
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+}
+.enemy-panel {
+  display: flex; gap: 14px; align-items: flex-start; text-align: left;
+  padding: 14px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.03);
+}
+.enemy-panel canvas { flex: none; }
+.enemy-panel.boss { border-color: rgba(255, 79, 94, 0.45); }
+.enemy-panel.unknown { opacity: 0.55; }
+.enemy-panel h3 { margin: 0; font-size: 15px; letter-spacing: 0.08em; text-transform: uppercase; }
+.enemy-body { min-width: 0; }
+.enemy-traits { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.enemy-trait {
+  font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+  padding: 2px 7px; border: 1px solid var(--line); color: var(--accent);
+}
+.enemy-panel.boss .enemy-trait { color: #ff8090; }
+.enemy-desc { margin: 8px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--ink-dim); }
+.enemy-counter-label {
+  margin-top: 10px; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--good);
+}
+.enemy-counter { margin: 3px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--ink); }
+
+/* Tech synergies (data/synergies.ts). `--syn` is the family colour. */
+.synergy-summary { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.synergy-chip {
+  font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 4px 10px; border: 1px solid var(--line); color: var(--ink-dim);
+}
+.synergy-chip.on { border-color: var(--syn); color: var(--syn); }
+.synergy-line {
+  margin-top: 4px; padding: 8px 10px; border-left: 2px solid var(--syn);
+  background: rgba(255, 255, 255, 0.03); text-align: left;
+}
+.synergy-line .synergy-tag {
+  font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--syn);
+}
+.synergy-line .synergy-text { font-size: 12px; line-height: 1.45; color: var(--ink-dim); margin-top: 2px; }
+.synergy-line.completes { background: rgba(255, 255, 255, 0.07); box-shadow: inset 0 0 0 1px var(--syn); }
+.synergy-line.completes .synergy-text { color: var(--ink); font-weight: 600; }
 .r-common { color: var(--ink-dim); }
 .r-rare { color: var(--accent); }
 .r-epic { color: var(--essence); }

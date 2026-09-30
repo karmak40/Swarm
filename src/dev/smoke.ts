@@ -57,7 +57,10 @@ import { WaveDirector } from '../game/waves';
 import { clearRun, loadRun, saveRun } from '../core/save';
 import { QUALITY } from '../core/platform';
 import { QualityGovernor, minQuality } from '../core/autoQuality';
+import { HapticDirector } from '../core/haptics';
 import { TouchInput } from '../core/touch';
+import { SYNERGY_TAGS } from '../data/synergies';
+import { enemyCounter, enemyTraits } from '../data/bestiary';
 import { TouchHud } from '../render/touchHud';
 import { Coach } from '../render/coach';
 import { LEVELS, waveScaling, ngDifficultyMult, makeSkirmishLevel } from '../data/levels';
@@ -1480,6 +1483,337 @@ function testEndlessMode() {
   check('campaign runs are not endless', !camp.endless);
 }
 
+function testBestiary() {
+  console.log('\n▸ bestiary');
+  const defs = Object.values(ENEMIES);
+  check('every hive type has fighting advice', defs.every((d) => enemyCounter(d).length > 20),
+    defs.filter((d) => enemyCounter(d).length <= 20).map((d) => d.id).join(','));
+  const fliers = defs.filter((d) => d.behavior === 'flyer' || d.flies);
+  check('fliers lead with the anti-air warning',
+    fliers.length > 0 && fliers.every((d) => enemyCounter(d).startsWith('Flies over walls')));
+  check('bosses are tagged as bosses', defs.filter((d) => d.boss).every((d) => enemyTraits(d)[0] === 'Boss'));
+  check('the Weaver warns about webs', enemyCounter(ENEMIES.weaver).includes('Webs silence turrets'));
+
+  const KEY = 'swarm.save.v1';
+  const prev = store.get(KEY);
+  store.set(KEY, JSON.stringify({ version: 3, stats: { runs: 4 } }));
+  check('veterans start with the opening pair catalogued', loadSave().seenEnemies.join() === 'crawler,mite');
+  store.set(KEY, JSON.stringify({ version: 3 }));
+  check('a fresh save starts with none', loadSave().seenEnemies.length === 0);
+  if (prev === undefined) store.delete(KEY); else store.set(KEY, prev);
+}
+
+function testFastForward() {
+  console.log('\n▸ fast-forward');
+  const a = new Game(); a.startLevel(0, undefined, 0xff2);
+  const b = new Game(); b.startLevel(0, undefined, 0xff2);
+  b.speed = 2;
+  const input = idleInput();
+  for (let i = 0; i < 120; i++) { a.update(DT, input); b.update(DT, input); }
+  check('×2 runs the clock twice as fast', Math.abs(b.runStats.timeSeconds - 2 * a.runStats.timeSeconds) < 1e-6,
+    `${a.runStats.timeSeconds.toFixed(2)} vs ${b.runStats.timeSeconds.toFixed(2)}`);
+  check('…and the build countdown too', Math.abs((60 - b.prepRemaining) - 2 * (60 - a.prepRemaining)) < 0.05
+    || b.prepRemaining < a.prepRemaining, `${a.prepRemaining.toFixed(2)} vs ${b.prepRemaining.toFixed(2)}`);
+  b.toggleSpeed();
+  check('toggling returns to ×1', b.speed === 1);
+}
+
+function testEliteAffixes() {
+  console.log('\n▸ elite affixes');
+  const game = new Game();
+  game.startLevel(0, undefined, 0xe117e);
+  const x = game.core.x + 400, y = game.core.y;
+  const seen = new Set<string>();
+  for (let i = 0; i < 40; i++) {
+    const e = game.spawnEnemy(ENEMIES.crawler, x, y, 1, 1, true);
+    if (e.affix) seen.add(e.affix);
+  }
+  check('every elite rolls a modifier, and all four turn up', seen.size === 4, [...seen].join(','));
+  check('non-elites have none', game.spawnEnemy(ENEMIES.crawler, x, y, 1, 1, false).affix === null);
+
+  const make = (affix: 'shielded' | 'regen' | 'swift' | 'volatile') => {
+    for (let i = 0; i < 200; i++) {
+      const e = game.spawnEnemy(ENEMIES.brute, x, y, 1, 1, true);
+      if (e.affix === affix) return e;
+    }
+    throw new Error(`no ${affix} elite rolled`);
+  };
+  const sh = make('shielded');
+  check('shielded: starts behind a shield worth 60% hp', sh.shieldHp > 0 && Math.abs(sh.shieldHp - sh.maxHp * 0.6) <= 1);
+  const sw = make('swift');
+  const plain = game.spawnEnemy(ENEMIES.brute, x, y, 1, 1, true);
+  plain.affix = null;
+  check('swift: 45% faster', Math.abs(sw.effectiveSpeed / plain.effectiveSpeed - 1.45) < 1e-9);
+
+  // Regen heals only after a lull.
+  const rg = make('regen');
+  rg.hp = rg.maxHp * 0.5;
+  game.damageEnemy(rg, 1, { source: 'turret', armorPierce: 999 });
+  const input = idleInput();
+  for (let i = 0; i < 20; i++) game.update(DT, input);            // ~0.3s: still inside the lull
+  const early = rg.hp;
+  for (let i = 0; i < 180; i++) game.update(DT, input);           // ~3s more
+  check('regen: waits for a lull, then heals', early <= rg.maxHp * 0.5 + 1 && rg.hp > early + rg.maxHp * 0.05,
+    `${Math.round(early)} → ${Math.round(rg.hp)} of ${rg.maxHp}`);
+
+  // Volatile: dies → blows up whatever's next to it.
+  const g2 = new Game();
+  g2.startLevel(0, undefined, 0xe117f);
+  g2.ore = 500;
+  const cx = Math.floor(g2.core.x / TILE), cy = Math.floor(g2.core.y / TILE);
+  let wall = null as null | (typeof g2.buildings)[number];
+  const sys = (g2 as unknown as { buildingSystem: { place: (d: typeof BUILDINGS.wall, x: number, y: number) => void } }).buildingSystem;
+  for (let r = 4; r < 12 && !wall; r++) {
+    for (let dx = -r; dx <= r && !wall; dx++) {
+      if (g2.canPlace(BUILDINGS.wall, cx + dx, cy + r) === null) {
+        sys.place(BUILDINGS.wall, cx + dx, cy + r);
+        wall = g2.buildings[g2.buildings.length - 1];
+        wall.progress = 1;
+      }
+    }
+  }
+  if (wall) {
+    let v = null as null | ReturnType<typeof g2.spawnEnemy>;
+    for (let i = 0; i < 200 && !v; i++) {
+      const e = g2.spawnEnemy(ENEMIES.crawler, wall.x + 20, wall.y, 1, 1, true);
+      if (e.affix === 'volatile') v = e;
+    }
+    const hp0 = wall.hp;
+    g2.damageEnemy(v!, 1e6, { source: 'turret', armorPierce: 999 });
+    check('volatile: its death blast hurts structures nearby', wall.dead || wall.hp < hp0, `${hp0} → ${wall.hp}`);
+  }
+}
+
+function testNewBosses() {
+  console.log('\n▸ new bosses');
+  check('the repeats are gone: every campaign sector has its own boss',
+    new Set(LEVELS.map((l) => l.boss)).size === LEVELS.length, LEVELS.map((l) => l.boss).join(','));
+
+  const game = new Game();
+  game.startLevel(3, undefined, 0xb055);
+  game.ore = 2000;
+  const es = game as unknown as { enemySystem: { resolveBossAbility: (e: unknown, i: number) => void; rebuildEnemyHash: () => void } };
+  const input = idleInput();
+
+  // Scolopendra: its body trails behind as it moves.
+  const sc = game.spawnEnemy(ENEMIES.scolopendra, game.core.x + 700, game.core.y, 1, 1, false);
+  for (let i = 0; i < 240; i++) game.update(DT, input);
+  check('scolopendra: the body trails behind the head', (sc.trail?.length ?? 0) >= 8, String(sc.trail?.length));
+
+  // Burrow: vanishes, then erupts.
+  const burrow = ENEMIES.scolopendra.abilities!.findIndex((a) => a.id === 'burrow');
+  es.enemySystem.resolveBossAbility(sc, burrow);
+  check('scolopendra: dives out of reach', sc.submerged && !sc.targetable);
+  for (let i = 0; i < 60 * 3; i++) game.update(DT, input);
+  check('scolopendra: surfaces again', !sc.submerged || sc.dead);
+
+  // Shed: live segments.
+  const before = game.enemies.filter((e) => e.def.id === 'centipedeling').length;
+  const shed = ENEMIES.scolopendra.abilities!.findIndex((a) => a.id === 'shed');
+  es.enemySystem.resolveBossAbility(sc, shed);
+  const after = game.enemies.filter((e) => e.def.id === 'centipedeling').length;
+  check('scolopendra: sheds segments that fight on', after - before === 4, `${before} → ${after}`);
+
+  // Weaver: webs silence turrets and slow the pilot.
+  const g2 = new Game();
+  g2.startLevel(4, undefined, 0x3eb);
+  g2.ore = 3000;
+  const sys = (g2 as unknown as { buildingSystem: { place: (d: typeof BUILDINGS.turret, x: number, y: number) => void } }).buildingSystem;
+  const cx = Math.floor(g2.core.x / TILE), cy = Math.floor(g2.core.y / TILE);
+  let turret = null as null | (typeof g2.buildings)[number];
+  for (let r = 3; r < 12 && !turret; r++) {
+    for (let dx = -r; dx <= r && !turret; dx++) {
+      if (g2.canPlace(BUILDINGS.turret, cx + dx, cy + r) === null) {
+        sys.place(BUILDINGS.turret, cx + dx, cy + r);
+        turret = g2.buildings[g2.buildings.length - 1];
+        turret.progress = 1;
+      }
+    }
+  }
+  check('found a spot for the web target', !!turret);
+  if (!turret) return;
+  g2.fire({
+    x: turret.x + 40, y: turret.y, angle: Math.PI, speed: 340, damage: 6, kind: 'web',
+    faction: 'hive', color: 0xe8f0ff, size: 7, life: 3, armorPierce: 0, ownerId: 0, splash: 0,
+  });
+  for (let i = 0; i < 60 && turret.webbed <= 0; i++) g2.update(DT, input);
+  check('weaver web: a hit turret is webbed', turret.webbed > 0);
+  const hp0 = turret.hp;
+  check('…and barely scratched', hp0 > turret.maxHp - 20);
+  for (let i = 0; i < 60 * 6; i++) g2.update(DT, input);
+  check('…and frees itself after a few seconds', turret.webbed === 0);
+
+  g2.fire({
+    x: g2.player.x + 200, y: g2.player.y, angle: Math.PI, speed: 340, damage: 6, kind: 'web',
+    faction: 'hive', color: 0xe8f0ff, size: 7, life: 3, armorPierce: 0, ownerId: 0, splash: 0,
+  });
+  for (let i = 0; i < 60 && g2.player.webbed <= 0; i++) g2.update(DT, input);
+  check('weaver web: a hit pilot is slowed', g2.player.webbed > 0);
+}
+
+function testTechSynergies() {
+  console.log('\n▸ tech synergies');
+  check('every tech card has a synergy family', TECH_CARDS.every((c) => SYNERGY_TAGS.includes(c.tag)));
+  check('each family can actually be completed',
+    SYNERGY_TAGS.every((tag) => TECH_CARDS.filter((c) => c.tag === tag)
+      .reduce((n, c) => n + (c.maxStacks ?? 3), 0) >= 5));
+
+  const game = new Game();
+  game.startLevel(0, undefined, 0x5e7e1);
+  const card = (id: string) => TECH_CARDS.find((c) => c.id === id)!;
+  const rate0 = game.perks.turretFireRate;
+
+  game.takeTech(card('hv_rounds'));
+  game.takeTech(card('hv_rounds'));
+  check('two Arsenal picks: no set bonus yet', Math.abs(game.perks.turretFireRate - rate0) < 1e-9);
+  game.takeTech(card('optics'));
+  check('the third Arsenal pick switches Arsenal I on (+10% fire rate)',
+    Math.abs(game.perks.turretFireRate - rate0 * 1.1) < 1e-9, String(game.perks.turretFireRate));
+  check('…and announces it', game.banner?.title.includes('ARSENAL') ?? false, game.banner?.title);
+
+  const shred0 = game.perks.armorShred;
+  game.takeTech(card('optics'));
+  game.takeTech(card('hv_rounds'));
+  check('the fifth switches Arsenal II on (+4 armour shred)', game.perks.armorShred === shred0 + 4);
+  check('tiers are counted once, not per pick',
+    Math.abs(game.perks.turretFireRate - rate0 * 1.1) < 1e-9);
+
+  game.takeTech(card('servos'));
+  check('other families are unaffected', Math.abs(game.perks.dashCooldown - 1) < 1e-9);
+
+  // Perks are rebuilt from the tech list on resume and in the next sector —
+  // the set bonuses have to come back too.
+  const resumed = new Game();
+  check('resume keeps set bonuses', resumed.resume(game.snapshot())
+    && Math.abs(resumed.perks.turretFireRate - game.perks.turretFireRate) < 1e-9
+    && resumed.perks.armorShred === game.perks.armorShred);
+  const next = new Game();
+  next.startLevel(1, game.carryOver(), 0x5e7e2);
+  check('the next sector keeps set bonuses',
+    Math.abs(next.perks.turretFireRate - game.perks.turretFireRate) < 1e-9
+    && next.perks.armorShred === game.perks.armorShred);
+}
+
+function testOrbitalStrike() {
+  console.log('\n▸ orbital strike');
+  const game = new Game();
+  game.startLevel(0, undefined, 0x57121e);
+  const s = game.strike;
+  const es = (game as unknown as { enemySystem: { rebuildEnemyHash: () => void } }).enemySystem;
+  const x = game.player.x + 160, y = game.player.y;
+
+  check('starts empty', s.charge === 0 && !s.ready);
+  check('calling it while charging does nothing', !s.call(x, y) && s.incoming.length === 0);
+
+  // Charge it the ordinary way: kills.
+  let kills = 0;
+  while (!s.ready && kills < 200) {
+    const e = game.spawnEnemy(ENEMIES.crawler, x + 900, y, 1, 1, false);
+    game.damageEnemy(e, 1e6, { source: 'turret', armorPierce: 999 });
+    kills++;
+  }
+  check('kills charge it', s.ready, `${kills} kills`);
+  check('a crawler-only charge takes a wave or two of kills', kills >= 15 && kills <= 30, `${kills}`);
+
+  const near = [0, 1, 2].map((i) => game.spawnEnemy(ENEMIES.brute, x + i * 24, y, 1, 1, false));
+  const far = game.spawnEnemy(ENEMIES.brute, x + 700, y, 1, 1, false);
+  es.rebuildEnemyHash();
+
+  check('calling it spends the charge and marks the spot', s.call(x, y) && !s.ready && s.incoming.length === 1);
+  s.update(0.5);
+  check('nothing lands before the delay', near.every((e) => e.hp === e.maxHp));
+  es.rebuildEnemyHash();
+  s.update(0.6);
+  check('it lands: enemies in the circle take heavy damage', near.every((e) => e.dead || e.hp < e.maxHp * 0.2));
+  check('enemies outside the circle are untouched', far.hp === far.maxHp);
+  check('its own kills do not recharge it', s.charge === 0);
+
+  // The charge rides along in a mid-run save.
+  s.charge = 12;
+  const resumed = new Game();
+  check('resume keeps the charge', resumed.resume(game.snapshot()) && resumed.strike.charge === 12);
+}
+
+function testTurretUpgrades() {
+  console.log('\n▸ turret upgrades');
+  const game = new Game();
+  game.startLevel(0, undefined, 0x0b9a4e);
+  game.ore = 5000;
+  game.essence = 500;
+
+  // A turret somewhere legal near the core.
+  const def = BUILDINGS.turret;
+  const cx = Math.floor(game.core.x / TILE), cy = Math.floor(game.core.y / TILE);
+  let spot: [number, number] | null = null;
+  for (let r = 3; r < 12 && !spot; r++) {
+    for (let dx = -r; dx <= r && !spot; dx++) {
+      if (game.canPlace(def, cx + dx, cy + r) === null) spot = [cx + dx, cy + r];
+    }
+  }
+  check('found a spot for the test turret', spot !== null);
+  if (!spot) return;
+  const sys = (game as unknown as { buildingSystem: { place: (d: typeof def, x: number, y: number) => void } }).buildingSystem;
+  sys.place(def, spot[0], spot[1]);
+  const b = game.buildings[game.buildings.length - 1];
+
+  check('an unfinished turret cannot upgrade', game.upgradeCost(b) === null && !game.upgradeBuilding(b));
+  b.progress = 1;
+
+  const base = game.costOf(def);
+  const c2 = game.upgradeCost(b)!;
+  check('level 2 costs 60% of the build', c2.ore === Math.max(1, Math.round(base.ore * 0.6)), `${c2.ore} vs ${base.ore}`);
+  const hull1 = b.maxHp;
+  const sell1 = game.sellValue(b).ore;
+  const ore0 = game.ore;
+  check('upgrade to level 2', game.upgradeBuilding(b) && b.level === 2);
+  check('it was paid for', game.ore === ore0 - c2.ore);
+  check('level 2: +30% damage, +25% hull',
+    // Hull is recomputed from the base hp, so allow one point of rounding.
+    Math.abs(b.upgrade.damage - 1.3) < 1e-9 && Math.abs(b.maxHp - hull1 * 1.25) <= 1, `hull ${hull1}→${b.maxHp}`);
+  check('upgrades raise the sell refund', game.sellValue(b).ore > sell1);
+
+  check('level 3 needs a branch', !game.upgradeBuilding(b) && b.level === 2);
+  check('upgrade to level 3 · long range', game.upgradeBuilding(b, 'range') && b.level === 3 && b.branch === 'range');
+  check('long range: +25% range, stacked damage', Math.abs(b.upgrade.range - 1.25) < 1e-9 && b.upgrade.damage > 1.3);
+  check('level 3 is the cap', game.upgradeCost(b) === null && !game.upgradeBuilding(b, 'rapid'));
+
+  // Walls and other non-turrets don't upgrade.
+  const wallSpot = (() => {
+    for (let r = 4; r < 14; r++) {
+      for (let dx = -r; dx <= r; dx++) if (game.canPlace(BUILDINGS.wall, cx + dx, cy - r) === null) return [cx + dx, cy - r];
+    }
+    return null;
+  })();
+  if (wallSpot) {
+    sys.place(BUILDINGS.wall, wallSpot[0], wallSpot[1]);
+    const wall = game.buildings[game.buildings.length - 1];
+    wall.progress = 1;
+    check('walls do not upgrade', game.upgradeCost(wall) === null);
+  }
+
+  // Broke: nothing happens, level unchanged.
+  const poor = new Game();
+  poor.startLevel(0, undefined, 0x0b9a4e);
+  poor.ore = 1000;
+  const psys = (poor as unknown as { buildingSystem: typeof sys }).buildingSystem;
+  psys.place(def, spot[0], spot[1]);
+  const pb = poor.buildings[poor.buildings.length - 1];
+  pb.progress = 1;
+  poor.ore = 0;
+  check('an unaffordable upgrade does nothing', !poor.upgradeBuilding(pb) && pb.level === 1 && poor.ore === 0);
+
+  // Save & resume keeps the level and branch — and keeps structures even when
+  // the ore in hand at save time is less than they cost (that used to drop them).
+  game.ore = 0;
+  const snap = game.snapshot();
+  const resumed = new Game();
+  check('resume from the snapshot', resumed.resume(snap));
+  const rb = resumed.buildings.find((x) => x.tx === b.tx && x.ty === b.ty);
+  check('resumed turret survives low ore at save time', !!rb);
+  check('resumed turret keeps level 3 · long range', rb?.level === 3 && rb?.branch === 'range');
+  check('resumed turret keeps its bigger hull', rb?.maxHp === b.maxHp, `${rb?.maxHp} vs ${b.maxHp}`);
+}
+
 function testRunSnapshot() {
   console.log('\n▸ mid-run save & resume');
   clearRun();
@@ -1831,6 +2165,60 @@ function testSaveMigration() {
   if (prev === undefined) store.delete(KEY); else store.set(KEY, prev);
 }
 
+function testTouchZoomLimits() {
+  console.log('\n▸ touch zoom limits');
+  const game = new Game();
+  game.startLevel(0, undefined, 0x2003);
+  game.touchUi = true;
+  game.setViewport(375, 812);
+  const cam = game.camera;
+  const { pxW, pxH } = game.world;
+
+  game.zoomCamera(0.01);                 // pinch far out
+  check('pinching out stops where the map still fills the screen',
+    375 / cam.zoom <= pxW + 0.5 && 812 / cam.zoom <= pxH + 0.5,
+    `view ${Math.round(375 / cam.zoom)}×${Math.round(812 / cam.zoom)} vs map ${pxW}×${pxH}`);
+  const floor = cam.zoom;
+  game.zoomCamera(1.25);
+  check('pinching back in responds at once (no banked deficit)', cam.zoom > floor * 1.2);
+
+  game.zoomCamera(100);                  // pinch far in
+  check('pinching in is still capped', cam.zoom < 1.5);
+}
+
+function testHaptics() {
+  console.log('\n▸ event haptics');
+  let t = 0;
+  const buzzes: number[] = [];
+  const hd = new HapticDirector(() => buzzes.push(t), () => t);
+
+  // The core under constant fire: a hit every frame for 30 seconds.
+  for (t = 0; t < 30; t += 1 / 60) hd.fire('coreHit');
+  check('a core hit every frame buzzes only every few seconds', buzzes.length <= 6 && buzzes.length >= 4,
+    `${buzzes.length} buzzes in 30s`);
+  const gaps = buzzes.slice(1).map((b, i) => b - buzzes[i]);
+  check('core-hit buzzes are spaced by their cooldown', gaps.every((g) => g >= 5 - 1e-9));
+
+  // A pile-up of different events stays inside the rolling budget.
+  const b = new HapticDirector(() => buzzes.push(t), () => t);
+  buzzes.length = 0;
+  for (t = 100; t < 115; t += 0.05) {
+    b.fire('coreHit'); b.fire('waveStart'); b.fire('coreCritical');
+  }
+  check('mixed events stay within the budget (≤4 per 15s)', buzzes.length <= 4, `${buzzes.length}`);
+  const g2 = buzzes.slice(1).map((x, i) => x - buzzes[i]);
+  check('no two event buzzes closer than the minimum gap', g2.every((g) => g >= 1.2 - 1e-9));
+
+  // The boss always gets through, even with the budget spent.
+  t = 114.9;
+  check('the boss cue ignores the budget and gap', b.fire('boss'));
+  check('but not its own cooldown', !b.fire('boss'));
+
+  const off = new HapticDirector(() => buzzes.push(t), () => t);
+  off.enabled = false;
+  check('disabled means silent', !off.fire('boss'));
+}
+
 function testQualityGovernor() {
   console.log('\n▸ auto quality');
   const run = (g: QualityGovernor, seconds: number, dt: number, q: 'high' | 'medium' | 'low', active = true) => {
@@ -1929,6 +2317,34 @@ function testCoach() {
   check('an ignored tip retires after its time on screen', c.done.includes('move'));
 }
 
+/** Long-press timing is real (setTimeout), so this one waits. */
+async function testStickZoneLongPress() {
+  console.log('\n▸ stick-zone long press');
+  const stub = { addEventListener: () => {}, getBoundingClientRect: () => ({ left: 0, top: 0 }) };
+  const t = new TouchInput(stub as unknown as HTMLElement);
+  t.layout(375, 812, { southpaw: false, scale: 1 });
+  const h = t as unknown as Record<'onDown' | 'onUp', (e: unknown) => void>;
+  const ev = (id: number, x: number, y: number) => ({ pointerId: id, clientX: x, clientY: y, preventDefault() {} });
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  // Pretend there's a structure at (80, 600), inside the stick zone.
+  t.longPressTarget = (x, y) => Math.hypot(x - 80, y - 600) < 16;
+
+  h.onDown(ev(1, 80, 600));
+  check('thumb in the zone starts the stick', t.stick.active);
+  await wait(520);
+  const lp = t.consumeLongPress();
+  check('held still on a structure: long press, stick released', lp !== null && !t.stick.active);
+  h.onUp(ev(1, 80, 600));
+  check('releasing after the long press is not a tap', t.mapTap === null);
+  t.reset();
+
+  h.onDown(ev(2, 60, 700));
+  await wait(520);
+  check('held still on empty ground: the stick stays', t.consumeLongPress() === null && t.stick.active);
+  h.onUp(ev(2, 60, 700));
+  t.reset();
+}
+
 function testTouchPinch() {
   console.log('\n▸ touch pinch');
   const stub = { addEventListener: () => {}, getBoundingClientRect: () => ({ left: 0, top: 0 }) };
@@ -1964,7 +2380,30 @@ function testTouchPinch() {
   h.onDown(ev(5, 60, 740));
   h.onUp(ev(5, 60, 740));
   check('drawer open: stick-zone tap is a tap, not the stick', !t.stick.active && t.mapTap !== null);
+  t.reset();
+
+  // A finger resting on the drawer or the structure menu must not count as a
+  // map hold: mouseDown(2) is the mining gesture, and a seam under the drawer
+  // would start mining while the player picks a structure.
+  h.onDown(ev(6, 200, 740));
+  check('drawer open: a held finger is not a mining hold', !t.mapHeld && !t.mouseDown(2));
+  h.onUp(ev(6, 200, 740));
+  check('drawer open: the tap still reaches the drawer', t.mapTap !== null);
   t.drawerOpen = false;
+  t.reset();
+
+  t.menuOpen = true;
+  h.onDown(ev(7, 250, 400));
+  check('menu open: a held finger is not a mining hold', !t.mapHeld && !t.mouseDown(2));
+  h.onUp(ev(7, 250, 400));
+  check('menu open: the tap still reaches the menu', t.mapTap !== null);
+  t.menuOpen = false;
+  t.reset();
+
+  // With nothing open, holding the map is still the mining gesture.
+  h.onDown(ev(8, 250, 400));
+  check('closed: holding the map is a mining hold', t.mouseDown(2));
+  h.onUp(ev(8, 250, 400));
   t.reset();
 }
 
@@ -1987,13 +2426,17 @@ function testTouchLayout() {
   const cases: [number, number, number][] = [
     [812, 375, 1], [667, 375, 1], [896, 414, 1], [1024, 768, 1], [812, 375, 1.6],
     [375, 812, 1], [390, 844, 1], [360, 740, 1.2], [360, 640, 1.6],
+    // Tablets at the tablet boost, and at the capped maximum (setting × boost).
+    [1180, 820, 1.35], [820, 1180, 1.35], [1024, 768, 2], [768, 1024, 2],
   ];
   // Controls that share a slot and are never visible together.
   const exclusive = new Set(['startWave/confirm', 'confirm/startWave']);
 
+  // Every size for both hands: the southpaw mirror has to hold up too.
+  for (const southpaw of [false, true])
   for (const [w, h, scale] of cases) {
-    const tag = `${w}x${h}@${scale}`;
-    t.layout(w, h, { southpaw: false, scale });
+    const tag = `${w}x${h}@${scale}${southpaw ? ' L' : ''}`;
+    t.layout(w, h, { southpaw, scale });
     const all = rects();
 
     check(`${tag}: every control is on screen`,
@@ -2012,7 +2455,9 @@ function testTouchLayout() {
 
     // The movement thumb zone must stay clear of buttons, or dragging to move
     // would fire an action instead.
-    const zone: R = { id: 'stick', x: 0, y: h * 0.32, w: w * 0.42, h: h * 0.68 };
+    const zone: R = { id: 'stick', x: t.stickX0, y: t.stickTop, w: t.stickX1 - t.stickX0, h: h - t.stickTop };
+    // It may give way to a control, but never shrink to an unusable sliver.
+    check(`${tag}: movement zone stays thumb-sized`, zone.w >= w * 0.28, `${Math.round(zone.w)}px of ${w}`);
     const inZone = all.filter((b) => overlaps(b, zone));
     check(`${tag}: movement zone is clear of controls`, inZone.length === 0,
       inZone.map((b) => b.id).join(','));
@@ -2538,12 +2983,21 @@ testTouchLayout();
 testTouchPinch();
 testCoach();
 testQualityGovernor();
+testHaptics();
+testTouchZoomLimits();
 testSaveMigration();
 testDroneBay();
 testDroneVulnerability();
 testDroneSnapshot();
 testEndlessMode();
 testRunSnapshot();
+testTurretUpgrades();
+testOrbitalStrike();
+testTechSynergies();
+testEliteAffixes();
+testFastForward();
+testBestiary();
+testNewBosses();
 testEarlyWaveStart();
 testRelicShop();
 testDashUpgrades();
@@ -2557,7 +3011,13 @@ testScorpion();
 testWasp();
 testFullLevel(0);
 testFullLevel(2);
+testFullLevel(3);
+// Necrotide (4) is deliberately not run: the scripted defence can't clear its
+// boss wave in the sim budget with *any* boss there, the old Matriarch
+// included — a limit of the bot, not the sector. The Weaver's mechanics are
+// covered in testNewBosses.
 testFullLevel(5);
+await testStickZoneLongPress();
 
 console.log(`\n${failures === 0 ? '✅ all checks passed' : `❌ ${failures} check(s) failed`}`);
 // Non-zero exit so `npm test` fails CI-style. Typed loosely to avoid pulling

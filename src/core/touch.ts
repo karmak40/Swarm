@@ -19,7 +19,7 @@ import type { SafeInsets } from './platform';
  * itself, which is more precise than a global mode — and a third circle does not
  * fit around the action corner on a 375px-tall screen without overlapping.
  */
-export type TouchButtonId = 'dash' | 'build' | 'pause' | 'startWave' | 'map' | 'confirm';
+export type TouchButtonId = 'dash' | 'build' | 'pause' | 'startWave' | 'map' | 'confirm' | 'strike' | 'speed';
 
 export interface TouchButton {
   id: TouchButtonId;
@@ -62,8 +62,12 @@ interface PointerRec {
   startX: number;
   startY: number;
   t: number;
-  /** 'pan': a build-mode touch off the ghost — a drag pans, a tap aims. */
-  role: 'stick' | 'button' | 'map' | 'pan' | 'pinch';
+  /**
+   * 'pan': a build-mode touch off the ghost — a drag pans, a tap aims.
+   * 'ui': a touch on an open drawer or structure menu — taps and long-presses
+   * only, never a map hold.
+   */
+  role: 'stick' | 'button' | 'map' | 'pan' | 'pinch' | 'ui';
   button?: TouchButtonId;
   /** Aim-point offset from the finger while dragging a grabbed ghost. */
   grabX: number;
@@ -92,6 +96,15 @@ export class TouchInput implements InputSource {
    * tappable underneath it and the player hits Dash aiming for a turret.
    */
   drawerOpen = false;
+  /**
+   * Whether a structure sits under this screen point. Set by the game layer;
+   * lets a thumb resting in the stick zone long-press a structure there. Only
+   * consulted for stick touches, so a still thumb anywhere else in the zone
+   * keeps the stick.
+   */
+  longPressTarget: ((x: number, y: number) => boolean) | null = null;
+  /** Set while the structure (long-press) menu is open; see the 'ui' pointer role. */
+  menuOpen = false;
   /** Non-null while a structure is selected and awaiting placement. */
   placing = false;
   /**
@@ -115,8 +128,6 @@ export class TouchInput implements InputSource {
   /** Safe-area insets from the last layout; read by TouchHud for edge readouts. */
   insets: SafeInsets = { top: 0, right: 0, bottom: 0, left: 0 };
 
-  private w = 0;
-  private h = 0;
   private pointers = new Map<number, PointerRec>();
   /** Accumulated build-mode pan drag, in screen px; see consumePan. */
   private panX = 0;
@@ -153,8 +164,6 @@ export class TouchInput implements InputSource {
   /* ---------------------------------------------------------------------- */
 
   layout(w: number, h: number, opts: { southpaw?: boolean; scale?: number; insets?: SafeInsets } = {}) {
-    this.w = w;
-    this.h = h;
     this.southpaw = opts.southpaw ?? this.southpaw;
     this.scale = opts.scale ?? this.scale;
     const insets = opts.insets ?? this.insets;
@@ -187,6 +196,13 @@ export class TouchInput implements InputSource {
     // START and ✓ share one slot above Build (never visible together): on a
     // ~375px-wide phone a bottom-centre START lands inside Build's circle.
     const slotY = buildY - buildR - startR - labelGap;
+    // Orbital strike: beside Dash (portrait column) or beside Build (landscape
+    // row), on the inward side. A little smaller than the main buttons so it
+    // stays clear of the stick zone on a narrow phone at a large UI scale.
+    const strikeR = Math.round(r * 0.8);
+    const strikeX = column
+      ? actionX + dir * (r + strikeR + Math.round(8 * s))
+      : buildX + dir * (buildR + strikeR + Math.round(8 * s));
 
     this.buttons = [
       { id: 'dash', x: actionX, y: baseY, r, tapped: false, held: false, visible: true, enabled: true },
@@ -204,6 +220,10 @@ export class TouchInput implements InputSource {
         r: buildR, tapped: false, held: false, visible: false, enabled: true,
       },
       {
+        id: 'strike', x: strikeX, y: baseY,
+        r: strikeR, tapped: false, held: false, visible: true, enabled: true,
+      },
+      {
         id: 'pause', x: w - Math.round(30 * s) - insets.right, y: Math.round(30 * s) + insets.top,
         r: Math.round(22 * s), tapped: false, held: false, visible: true, enabled: true,
       },
@@ -211,8 +231,45 @@ export class TouchInput implements InputSource {
         id: 'map', x: w - Math.round(30 * s) - insets.right, y: Math.round(78 * s) + insets.top,
         r: Math.round(22 * s), tapped: false, held: false, visible: true, enabled: true,
       },
+      {
+        // Fast-forward ×1/×2, left of pause along the top edge — a third
+        // button down the right column runs into the action cluster on short
+        // screens at large UI scales.
+        id: 'speed', x: w - Math.round(78 * s) - insets.right, y: Math.round(30 * s) + insets.top,
+        r: Math.round(22 * s), tapped: false, held: false, visible: true, enabled: true,
+      },
     ];
+
+    // The pause/overview pair always sits top-right. Southpaw puts the stick
+    // zone on that side, and on a short landscape screen at a large UI scale
+    // the overview button reaches below the zone's usual top edge — so the
+    // zone starts under it instead.
+    this.stickTop = h * 0.32;
+    if (this.southpaw) {
+      // The lowest of the top-right column (pause / overview).
+      const low = this.button('map')!;
+      this.stickTop = Math.max(this.stickTop, low.y + low.r * 1.35 + 4);
+    }
+
+    // The zone spans STICK_ZONE_FRACTION of the width from the thumb's edge,
+    // but gives way to any control that would reach into it: on the
+    // narrowest phone at the largest UI scale there is no room to keep every
+    // button out of the usual 42%, and a thumb landing on a button must press
+    // the button, not start walking.
+    const zoneW = w * STICK_ZONE_FRACTION;
+    this.stickX0 = this.southpaw ? w - zoneW : 0;
+    this.stickX1 = this.southpaw ? w : zoneW;
+    for (const b of this.buttons) {
+      if (b.y + b.r <= this.stickTop) continue;
+      if (this.southpaw) this.stickX0 = Math.max(this.stickX0, b.x + b.r + 4);
+      else this.stickX1 = Math.min(this.stickX1, b.x - b.r - 4);
+    }
   }
+
+  /** Movement-stick zone from the last layout: x in [stickX0, stickX1], y below stickTop. */
+  stickTop = 0;
+  stickX0 = 0;
+  stickX1 = 0;
 
   button(id: TouchButtonId) {
     return this.buttons.find((b) => b.id === id);
@@ -243,9 +300,7 @@ export class TouchInput implements InputSource {
   }
 
   private inStickZone(x: number, y: number) {
-    const zoneW = this.w * STICK_ZONE_FRACTION;
-    const inX = this.southpaw ? x > this.w - zoneW : x < zoneW;
-    return inX && y > this.h * 0.32;
+    return x >= this.stickX0 && x <= this.stickX1 && y > this.stickTop;
   }
 
   /** A quick, stationary release — a tap rather than a drag or a hold. */
@@ -285,6 +340,21 @@ export class TouchInput implements InputSource {
       return;
     }
 
+    // An open drawer or structure menu is UI, not map. Its touches tap and
+    // long-press (slot details, or another structure's menu) but must never
+    // become a map hold — that mines any seam under the finger. The aim point
+    // still follows, so a long-press beside an open menu resolves the
+    // structure actually under the finger. The drawer also covers the stick
+    // zone's lower-left slots in portrait, which is why this comes before the
+    // stick check.
+    if (this.drawerOpen || this.menuOpen) {
+      rec('ui');
+      this.mouseX = x;
+      this.mouseY = y;
+      this.armLongPress(e.pointerId);
+      return;
+    }
+
     // A second finger on the map turns the pair into a pinch. The first
     // finger's gesture (mining hold, pending tap, long press, pan, ghost drag)
     // is abandoned — two fingers down is never a tap.
@@ -308,15 +378,16 @@ export class TouchInput implements InputSource {
       return;
     }
 
-    // Not while the build drawer is up: it spans the bottom of the screen, and
-    // in portrait its left-hand slots sit inside the stick zone — tapping them
-    // summoned the stick instead of picking the structure.
-    if (!this.stick.active && !this.drawerOpen && this.inStickZone(x, y)) {
+    if (!this.stick.active && this.inStickZone(x, y)) {
       this.stick.active = true;
       this.stick.pointerId = e.pointerId;
       this.stick.cx = x; this.stick.cy = y;
       this.stick.tx = x; this.stick.ty = y;
       rec('stick');
+      // The stick zone covers a big slice of the map, and structures in it
+      // were unreachable by long-press. A thumb that stays put there on a
+      // structure long-presses it instead (a still stick does nothing anyway).
+      this.armLongPress(e.pointerId);
       return;
     }
 
@@ -336,16 +407,32 @@ export class TouchInput implements InputSource {
     this.mouseX = x;
     this.mouseY = y;
     this.mapHeld = true;
+    this.armLongPress(e.pointerId);
+  };
+
+  /** Reports a long press if pointer `id` stays put on the map or UI long enough. */
+  private armLongPress(id: number) {
     clearTimeout(this.longPressTimer);
     this.longPressTimer = window.setTimeout(() => {
-      const p = this.pointers.get(e.pointerId);
-      if (!p || p.role !== 'map' || this.placing) return;
+      const p = this.pointers.get(id);
+      if (!p || (p.role !== 'map' && p.role !== 'ui' && p.role !== 'stick') || this.placing) return;
       // Only a stationary finger counts as a long press.
       if (Math.abs(p.x - p.startX) > TAP_SLOP || Math.abs(p.y - p.startY) > TAP_SLOP) return;
+      if (p.role === 'stick') {
+        // Only over a structure — otherwise it's a thumb about to move.
+        if (!this.longPressTarget?.(p.x, p.y)) return;
+        // Hand the finger over from the stick: inert until it lifts, so it
+        // neither walks nor taps.
+        this.stick.active = false;
+        this.stick.pointerId = -1;
+        p.role = 'ui';
+        this.mouseX = p.x;
+        this.mouseY = p.y;
+      }
       this.mapLongPress = { x: p.x, y: p.y };
       this.buzz(22);
     }, LONG_PRESS_MS);
-  };
+  }
 
   private onMove = (e: PointerEvent) => {
     const p = this.pointers.get(e.pointerId);
@@ -414,6 +501,11 @@ export class TouchInput implements InputSource {
     }
     if (p.role === 'pan') {
       if (!p.panning && this.isTap(p)) this.tapAt(p.x, p.y);
+      return;
+    }
+    if (p.role === 'ui') {
+      clearTimeout(this.longPressTimer);
+      if (this.isTap(p)) this.mapTap = { x: p.x, y: p.y };
       return;
     }
     // Lifting one pinch finger ends the pinch; the one left behind stays a

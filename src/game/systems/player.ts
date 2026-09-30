@@ -103,6 +103,7 @@ export class PlayerSystem {
     p.invuln = Math.max(0, p.invuln - dt);
     p.recoil = damp(p.recoil, 0, 14, dt);
     p.dashCooldown = Math.max(0, p.dashCooldown - dt);
+    p.webbed = Math.max(0, p.webbed - dt);
 
     if (g.perks.playerRegen > 0 && p.hp < p.maxHp) {
       p.hp = Math.min(p.maxHp, p.hp + g.perks.playerRegen * dt);
@@ -116,7 +117,8 @@ export class PlayerSystem {
       p.heat = Math.max(0, p.heat - dt * 0.42);
     }
 
-    const speed = 232 * g.perks.playerSpeed;
+    // A Weaver's web drags the pilot to a crawl; a dash still breaks free.
+    const speed = 232 * g.perks.playerSpeed * (p.webbed > 0 ? 0.4 : 1);
 
     // Dash.
     if (p.dashTime > 0) {

@@ -122,6 +122,13 @@ export class Coach {
         anchor: (f) => f.hud.threatAnchor && { ...f.hud.threatAnchor, r: 22 * f.touch.scale },
       },
       {
+        id: 'strike',
+        text: () => tr('coach.strike', 'Orbital strike charged — tap ▼, then tap the map'),
+        ready: (f) => calm(f) && f.game.strike.ready && !!f.touch.button('strike')?.visible,
+        done: (f) => f.game.cursorMode === 'strike',
+        anchor: (f) => btn(f, 'strike'),
+      },
+      {
         id: 'move',
         text: () => tr('coach.move', 'Drag here to move'),
         ready: (f) => calm(f),
@@ -149,7 +156,7 @@ export class Coach {
       },
       {
         id: 'hold',
-        text: () => tr('coach.hold', 'Hold a structure to repair, sell or retarget it'),
+        text: () => tr('coach.hold', 'Hold a structure to upgrade, repair or sell it'),
         ready: (f) => calm(f) && this.holdTarget(f) !== null,
         done: (f) => f.hud.menu !== null,
         anchor: (f) => {

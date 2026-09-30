@@ -16,6 +16,14 @@
  * rejected promise we already catch.
  */
 
+import { isTabletDevice } from './platform';
+
+/** Running inside the Capacitor Android/iOS shell (not a browser or Electron). */
+export function isNativeShell(): boolean {
+  const cap = (globalThis as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
+  return cap?.isNativePlatform?.() === true;
+}
+
 /** Hides the native status bar for full-screen immersion. No-op on web. */
 export async function hideStatusBar() {
   try {
@@ -25,15 +33,17 @@ export async function hideStatusBar() {
 }
 
 /**
- * Locks orientation. Backed by the Screen Orientation Web API on the web.
- * Currently 'portrait' for the layout experiment — was 'landscape'; flip
- * this one string back to revert (matches AndroidManifest.xml's
- * screenOrientation and Info.plist's UISupportedInterfaceOrientations).
+ * Phones: lock to portrait. Tablets: leave rotation free — landscape is
+ * their natural way up and the layout has the room (see
+ * `platform.allowsLandscape`). The native manifests no longer pin
+ * orientation, so this is the one place the phone lock lives. Backed by the
+ * Screen Orientation Web API on the web, where it only takes in fullscreen.
  */
 export async function lockOrientation() {
   try {
     const { ScreenOrientation } = await import('@capacitor/screen-orientation');
-    await ScreenOrientation.lock({ orientation: 'portrait' });
+    if (isTabletDevice()) await ScreenOrientation.unlock();
+    else await ScreenOrientation.lock({ orientation: 'portrait' });
   } catch { /* denied or unsupported */ }
 }
 

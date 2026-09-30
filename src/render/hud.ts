@@ -1,5 +1,6 @@
 import { clamp, fmtNum, fmtTime, TAU } from '../core/math';
 import { buildingStats } from './buildingInfo';
+import { branchEffect, branchName } from '../data/upgrades';
 import { t as tr } from '../core/i18n';
 import {
   BUILDINGS, CATEGORY_KEY, buildCategoryLabel, buildingDesc, buildingName,
@@ -33,6 +34,32 @@ function targetingLabel(mode: TargetingMode): string {
  * build bar, minimap, boss bar, tooltips and the phase banner. Keeping it in
  * canvas means it shakes and flashes with the world instead of floating above it.
  */
+/** A horizontal lane for transient touch hints: x-extent and top edge, CSS px. */
+export interface HintLane {
+  left: number;
+  right: number;
+  top: number;
+}
+
+/**
+ * Which lane a hint of `textW` px goes in: the narrow one beside the minimap
+ * when it fits at full size, otherwise the full-width one under the minimap —
+ * moving a long hint down beats shrinking it to an unreadable size. With no
+ * wide lane (minimap hidden, landscape) the narrow one is already full width.
+ */
+export function pickHintLane(textW: number, narrow: HintLane, wide: HintLane | null): HintLane {
+  return !wide || textW + 32 <= narrow.right - narrow.left ? narrow : wide;
+}
+
+/**
+ * Top edge for a hint box of height `h` whose preferred top is `top`: pushed
+ * just below `band` (the sector/wave banner) if it would overlap it.
+ */
+export function clearOfBand(top: number, h: number, band: { top: number; bottom: number } | null, gap = 6): number {
+  if (!band || top + h <= band.top || top >= band.bottom) return top;
+  return band.bottom + gap;
+}
+
 /** Smallest HUD font on touch, in CSS px before UI scale. */
 const TOUCH_MIN_FONT = 11;
 
@@ -56,7 +83,14 @@ export class Hud {
    * below the top HUD and, in portrait, left of the minimap. Refreshed every
    * frame; TouchHud and the coach read it rather than guessing a y offset.
    */
-  hintArea = { left: 12, right: 363, top: 100 };
+  hintArea: HintLane = { left: 12, right: 363, top: 100 };
+  /** Full-width lane under the minimap, for hints too long for `hintArea`; null when not needed. */
+  hintAreaWide: HintLane | null = null;
+  /**
+   * Screen band the phase/sector banner occupies this frame, or null. Hints
+   * in the lane under the minimap drop below it instead of covering it.
+   */
+  bannerBand: { top: number; bottom: number } | null = null;
 
   /**
    * Font size in px. Desktop gets `px` as authored. Touch scales it with the
@@ -70,9 +104,21 @@ export class Hud {
   /** Spacing multiplier: UI scale on touch, 1 on desktop. */
   private get k() { return this.compact ? this.uiScale : 1; }
 
-  /** Right edge of the top strip on touch: the pause/map buttons own the corner. */
+  /** Top strip's left content end / clock start, from the last compactTopBar. */
+  private stripLeftEnd = 0;
+  private stripClockLeft = 0;
+
+  /**
+   * Width a wave tracker centred in the top strip's row would have between
+   * the strip's left block and the clock (landscape touch).
+   */
+  private trackerRoom(w: number) {
+    return 2 * Math.min(w / 2 - this.stripLeftEnd, this.stripClockLeft - w / 2) - Math.round(24 * this.k);
+  }
+
+  /** Right edge of the top strip on touch: the speed + pause buttons own the corner. */
   private stripRight(w: number) {
-    return w - Math.round(62 * this.uiScale) - this.insets.right;
+    return w - Math.round(110 * this.uiScale) - this.insets.right;
   }
 
   /**
@@ -103,18 +149,24 @@ export class Hud {
       // stacks the readouts top-down; each block returns its bottom edge.
       this.portrait = h > w;
       let y = this.compactTopBar(ctx, game, w);
-      y = Math.max(y, this.waveTracker(ctx, game, w, this.portrait ? y : 0));
+      // Landscape shares the strip's row with the tracker when there's room
+      // between its left block and the clock; otherwise (portrait, or a large
+      // UI scale) the tracker stacks under the strip.
+      const inline = !this.portrait && this.trackerRoom(w) >= 180 * this.uiScale;
+      y = Math.max(y, this.waveTracker(ctx, game, w, inline ? 0 : y));
       if (game.bossRef) y = this.bossBar(ctx, game, w, y);
       this.topClear = y;
-      const mapLeft = this.minimap(ctx, game, w, h);
+      const map = this.minimap(ctx, game, w, h);
       const s = this.uiScale;
+      const left = Math.round(12 * s) + this.insets.left;
+      const fullRight = w - Math.round(12 * s) - this.insets.right;
+      const beside = this.portrait && map !== null;
       this.hintArea = {
-        left: Math.round(12 * s) + this.insets.left,
-        right: this.portrait && mapLeft !== null
-          ? mapLeft - Math.round(8 * s)
-          : w - Math.round(12 * s) - this.insets.right,
+        left,
+        right: beside ? map.left - Math.round(8 * s) : fullRight,
         top: y + Math.round(6 * s),
       };
+      this.hintAreaWide = beside ? { left, right: fullRight, top: map.bottom + Math.round(8 * s) } : null;
       this.banner(ctx, game, w, h);
       this.errorToast(ctx, game, w, h);
       this.debug(ctx, game, w, h, fps);
@@ -174,7 +226,9 @@ export class Hud {
 
     const eff = game.power.efficiency;
     ctx.fillStyle = css(eff >= 1 ? 0x5cf2a0 : eff > 0.6 ? 0xffb347 : 0xff4f5e);
-    ctx.fillText(`⚡${Math.round(game.power.draw)}/${Math.round(game.power.supply)}`, x, row1);
+    const powerText = `⚡${Math.round(game.power.draw)}/${Math.round(game.power.supply)}`;
+    ctx.fillText(powerText, x, row1);
+    const resourcesEnd = x + this.measure(ctx, powerText);
 
     // Clock, tucked left of the pause button.
     ctx.textAlign = 'right';
@@ -190,17 +244,24 @@ export class Hud {
     const barH = Math.round(7 * s);
     const labelFont = `600 ${this.fs(9)}px ${UI_FONT}`;
     ctx.font = labelFont;
+    // Both bars are labelled: they share a colour scheme, and the player's
+    // own health read as a second core bar. Same word as the desktop rail.
     const coreLabel = tr('hud.compact.coreLabel', 'CORE');
+    const chassisLabel = tr('hud.rail.chassis', 'CHASSIS');
     const labelW = this.measure(ctx, coreLabel);
+    const chassisW = this.measure(ctx, chassisLabel);
     const gap = Math.round(6 * s);
+    const between = Math.round(14 * s);
     let coreX: number, coreW: number, px: number, pW: number;
     if (portrait) {
+      // CORE [core bar]   CHASSIS [chassis bar]
       coreX = pad + labelW + gap;
-      const barsW = right - coreX - Math.round(14 * s);
+      const barsW = right - coreX - between - chassisW - gap;
       coreW = barsW * 0.58;
-      px = coreX + coreW + Math.round(14 * s);
+      px = coreX + coreW + between + chassisW + gap;
       pW = barsW - coreW;
     } else {
+      // [core bar] CORE   [chassis bar] CHASSIS
       coreX = pad;
       coreW = Math.round(120 * s);
       px = coreX + coreW + gap + labelW + Math.round(12 * s);
@@ -220,6 +281,8 @@ export class Hud {
     ctx.fillStyle = css(0x55667e);
     ctx.fillText(coreLabel, portrait ? pad : coreX + coreW + gap, row2 - barH / 2);
 
+    ctx.fillText(chassisLabel, portrait ? px - gap - chassisW : px + pW + gap, row2 - barH / 2);
+
     const p = game.player;
     const pPct = clamp(p.hp / p.maxHp, 0, 1);
     ctx.fillStyle = rgba(0x000000, 0.6);
@@ -235,16 +298,23 @@ export class Hud {
 
     // Auto-aim lock indicator: the player has no crosshair to read. Portrait
     // has no room after the bars, so it sits on the resource row by the clock.
+    ctx.font = labelFont;
+    const locked = tr('hud.compact.locked', '◎ LOCKED');
+    const lockedX = px + pW + gap + chassisW + Math.round(10 * s);
+    // Where this strip's left-hand content ends and the clock begins, so a
+    // wave tracker sharing the row (landscape) knows its room. The lock
+    // indicator's slot is reserved even when hidden, or the tracker would
+    // jump every time a target is acquired.
+    this.stripLeftEnd = portrait ? right : Math.max(resourcesEnd, lockedX + this.measure(ctx, locked));
+    this.stripClockLeft = clockLeft;
     if (game.autoTarget) {
-      ctx.font = labelFont;
       ctx.fillStyle = css(0xff8090);
-      const locked = tr('hud.compact.locked', '◎ LOCKED');
       if (portrait) {
         ctx.textAlign = 'right';
         ctx.fillText(locked, clockLeft - Math.round(10 * s), row1);
       } else {
         ctx.textAlign = 'left';
-        ctx.fillText(locked, px + pW + Math.round(8 * s), row2 - barH / 2);
+        ctx.fillText(locked, lockedX, row2 - barH / 2);
       }
     }
     return row2 + 2 + heatH;
@@ -297,7 +367,17 @@ export class Hud {
     ctx.textAlign = 'right';
     ctx.font = `500 13px ${MONO}`;
     ctx.fillStyle = css(0x8fa3c0);
-    ctx.fillText(fmtTime(game.runStats.timeSeconds), w - 24 - insetRight, 18 + insetTop);
+    const clock = fmtTime(game.runStats.timeSeconds);
+    ctx.fillText(clock, w - 24 - insetRight, 18 + insetTop);
+    const clockW = this.measure(ctx, clock);
+    // Fast-forward indicator (R toggles it).
+    const speedText = game.speed > 1
+      ? tr('hud.topBar.fastForward', '▶▶ ×2  [R]')
+      : tr('hud.topBar.normalSpeed', '×1  [R]');
+    ctx.font = `600 11px ${UI_FONT}`;
+    ctx.fillStyle = css(game.speed > 1 ? 0xffcc55 : 0x55667e);
+    ctx.fillText(speedText, w - 24 - insetRight - clockW - 18, 18 + insetTop);
+    ctx.fillStyle = css(0x8fa3c0);
     ctx.font = `500 11px ${UI_FONT}`;
     ctx.fillText(`🏆 ${game.progress.unlockedCount}/${game.progress.totalCount}`, w - 24 - insetRight, 35 + insetTop);
   }
@@ -332,10 +412,11 @@ export class Hud {
     const cx = stacked ? (pad + right) / 2 : w / 2;
     const y = stacked ? top + Math.round(14 * k)
       : this.compact ? Math.round(14 * k) + this.insets.top : 66;
+    const room = this.trackerRoom(w);
     const bw = stacked ? Math.min(right - pad, 260 * k)
-      : this.compact ? Math.min(w * 0.42, 260 * k) : 360;
+      : this.compact ? Math.min(w * 0.42, 260 * k, room) : 360;
     // Longest line allowed; canvas squeezes a line rather than overflow past it.
-    const maxW = stacked ? right - pad : this.compact ? w * 0.6 : undefined;
+    const maxW = stacked ? right - pad : this.compact ? Math.min(w * 0.6, room) : undefined;
 
     const isPrep = game.inBuildPhase;
     const label = isPrep ? tr('hud.wave.nextAssault', 'NEXT ASSAULT') : game.waveLabel;
@@ -394,8 +475,22 @@ export class Hud {
         ctx.lineTo(px - pr * 0.9, pipY);
         ctx.closePath();
         ctx.fill();
+      } else if (cur) {
+        // The current wave stands taller and outlined: done (green) and
+        // current (amber) differ only by hue otherwise, and red-green colour
+        // blindness folds those two together.
+        const ch = pr * 1.8;
+        ctx.fillRect(px - pw * 0.32, pipY - ch / 2, pw * 0.64, ch);
+        ctx.strokeStyle = rgba(0xffffff, 0.85);
+        ctx.lineWidth = 1;
+        ctx.strokeRect(px - pw * 0.32 - 0.5, pipY - ch / 2 - 0.5, pw * 0.64 + 1, ch + 1);
       } else {
         ctx.fillRect(px - pw * 0.32, pipY - pr / 2, pw * 0.64, pr);
+      }
+      if (isBossPip && cur) {
+        ctx.strokeStyle = rgba(0xffffff, 0.85);
+        ctx.lineWidth = 1;
+        ctx.stroke();
       }
     }
 
@@ -592,8 +687,8 @@ export class Hud {
   /** Minimap visibility, toggled by the touch overview button. */
   showMinimap = true;
 
-  /** Draws the minimap; returns its left edge on touch, or null when hidden. */
-  private minimap(ctx: Ctx, game: Game, w: number, h: number): number | null {
+  /** Draws the minimap; returns its left/bottom edges, or null when hidden (touch). */
+  private minimap(ctx: Ctx, game: Game, w: number, h: number): { left: number; bottom: number } | null {
     if (this.compact && !this.showMinimap) return null;
     const s = this.compact ? this.uiScale : 1;
     // On touch the bottom-right corner is the action cluster, so the map moves to
@@ -696,14 +791,15 @@ export class Hud {
     ctx.lineWidth = 1;
     techRect(ctx, x0, y0, size, size, 10);
     ctx.stroke();
-    return x0;
+    return { left: x0, bottom: y0 + size };
   }
 
   /* ---- left status rail ------------------------------------------------ */
 
   private statusRail(ctx: Ctx, game: Game, w: number, h: number) {
     const x = 22 + this.insets.left;
-    let y = h - 210 - this.insets.bottom;
+    // Starts high enough to fit core, chassis, heat, dash, strike and tech.
+    let y = h - 240 - this.insets.bottom;
     void w;
 
     // Core integrity.
@@ -766,6 +862,20 @@ export class Hud {
     ctx.fillRect(x, y, bw, 4);
     ctx.fillStyle = css(dashReady ? 0x5cf2a0 : 0x2f5680);
     ctx.fillRect(x, y, bw * (dashReady ? 1 : 1 - p.dashCooldown / 1.35), 4);
+    y += 20;
+
+    // Orbital strike charge.
+    const strike = game.strike;
+    ctx.font = `500 9px ${UI_FONT}`;
+    ctx.fillStyle = css(strike.ready ? 0x9fe8ff : 0x55667e);
+    ctx.fillText(strike.ready
+      ? tr('hud.rail.strikeReady', 'ORBITAL STRIKE READY  [F]')
+      : tr('hud.rail.strikeCharging', 'ORBITAL STRIKE  {pct}%', { pct: Math.floor(strike.pct * 100) }), x, y);
+    y += 10;
+    ctx.fillStyle = rgba(0x000000, 0.6);
+    ctx.fillRect(x, y, bw, 4);
+    ctx.fillStyle = css(strike.ready ? 0x9fe8ff : 0x2f5680);
+    ctx.fillRect(x, y, bw * strike.pct, 4);
     y += 20;
 
     // Active tech.
@@ -870,8 +980,23 @@ export class Hud {
       lines = [tr('hud.tooltip.hpShort', '{cur} / {max} HP', { cur: Math.ceil(b.hp), max: b.maxHp })
         + (b.shield > 0 ? tr('hud.tooltip.shieldInline', '  ·  {n} shield', { n: Math.ceil(b.shield) }) : '')];
       if (b.isTurret) {
+        title += `  ·  ${tr('hud.tooltip.level', 'Lv {n}', { n: b.level })}`
+          + (b.branch ? ` ${branchName(b.branch)}` : '');
         lines.push(tr('hud.tooltip.targeting', 'Targeting: {mode}  (T to cycle)  ·  {kills} kills',
           { mode: targetingLabel(b.targeting), kills: b.kills }));
+        // What the next upgrade costs and which key buys it (see data/upgrades.ts).
+        const up = game.upgradeCost(b);
+        if (up) {
+          const price = up.essence > 0
+            ? tr('hud.tooltip.costOreEssence', '{ore} ore · {essence} essence', { ore: up.ore, essence: up.essence })
+            : tr('hud.tooltip.costOre', '{ore} ore', { ore: up.ore });
+          lines.push(b.level === 1
+            ? tr('hud.tooltip.upgrade', 'U to upgrade ({cost}): +30% damage, +25% hull', { cost: price })
+            : tr('hud.tooltip.upgradeFork', 'U: {a} ({ea})  ·  I: {b} ({eb})  —  {cost}', {
+              a: branchName('rapid'), ea: branchEffect('rapid'),
+              b: branchName('range'), eb: branchEffect('range'), cost: price,
+            }));
+        }
       }
       if (b.def.droneSlots !== undefined) {
         const { live, slots } = game.droneCount(b);
@@ -935,6 +1060,7 @@ export class Hud {
 
   private banner(ctx: Ctx, game: Game, w: number, h: number) {
     const b = game.banner;
+    this.bannerBand = null;
     if (!b) return;
     const t = b.life / b.maxLife;
     // Fade in over the first 15%, hold, fade out over the last 30%.
@@ -942,6 +1068,7 @@ export class Hud {
     const y = this.compact ? h * 0.36 : h * 0.3;
     const k = this.k;
     const half = Math.round(42 * k);
+    this.bannerBand = { top: y - half, bottom: y + half };
 
     ctx.save();
     ctx.globalAlpha = clamp(alpha, 0, 1);
@@ -1016,12 +1143,14 @@ export class Hud {
     const txt = game.lastError.text.toUpperCase();
     // Touch: the bottom belongs to the thumbs and the action column, so the
     // toast goes under the top stack, in the hint lane, below any hint there.
-    const area = this.hintArea;
+    const area = pickHintLane(this.measure(ctx, txt), this.hintArea, this.hintAreaWide);
     const cx = this.compact ? (area.left + area.right) / 2 : w / 2;
     const maxW = this.compact ? area.right - area.left - 32 : w - 32;
     const tw = Math.min(this.measure(ctx, txt), maxW);
-    const y = this.compact ? area.top + Math.round(54 * k) : h - 132;
     const bh = Math.round(28 * k);
+    const y = this.compact
+      ? clearOfBand(area.top + Math.round(40 * k), bh, this.bannerBand) + bh / 2
+      : h - 132;
     ctx.fillStyle = 'rgba(30,6,10,0.92)';
     techRect(ctx, cx - tw / 2 - 16, y - bh / 2, tw + 32, bh, 8);
     ctx.fill();

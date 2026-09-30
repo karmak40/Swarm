@@ -29,8 +29,17 @@ decisions:
 - **Build** — pick from the drawer (hold a slot for details), tap the map to
   aim the ghost, then **✓** to place; walls go down on tap. While building,
   dragging the map pans the camera; **pinch** zooms at any time.
-- **Manage** — long-press a structure for repair / targeting / sell (sell asks
-  twice).
+- **Manage** — long-press a structure for upgrade / repair / targeting / sell
+  (sell asks twice). Turrets upgrade to level 2, then fork at level 3 into
+  rapid fire or long range (`data/upgrades.ts`); on desktop, U / I over a turret.
+- **Orbital strike** — kills charge it; tap ▼ then the map (desktop: F on the
+  cursor) and a beam lands a second later (`game/systems/strike.ts`).
+- **Fast-forward** — ×1/×2 button left of pause (desktop: R); the simulation
+  steps twice per frame rather than taking longer steps.
+- **Hive intel** — a card introduces each new enemy type during the build phase
+  before its wave (what it is, how to fight it); all of them live in the
+  Bestiary (title and pause menus). Advice is derived from the enemy data
+  (`data/bestiary.ts`).
 - The view auto-fits ~24 tiles across the short side; off-screen enemies and
   structures under attack get edge arrows.
 - First-time players are taught in context by `render/coach.ts` (one tip at a

@@ -112,6 +112,178 @@ export function drawEnemy(ctx: Ctx, s: EnemyDrawState) {
     case 'scorpion': drawScorpion(ctx, s, body, edge); break;
     case 'wasp': drawWasp(ctx, s, body, edge); break;
     case 'boss': drawBoss(ctx, s, body, edge); break;
+    case 'centipede': drawCentipedeHead(ctx, s, body, edge); break;
+    case 'spider': drawSpider(ctx, s, body, edge); break;
+  }
+}
+
+/**
+ * Centipede body, drawn in *world* space before the head: one plated segment
+ * per `trail` point (newest first), tapering toward the tail, each with a
+ * pair of legs rippling in a wave down the body.
+ */
+export function drawCentipedeBody(
+  ctx: Ctx, trail: readonly number[], r: number, color: number, accent: number, gait: number, flash: number,
+) {
+  const n = trail.length / 2;
+  if (n < 2) return;
+  const body = flash > 0 ? lighten(color, flash * 0.6) : color;
+  // Tail first, so nearer segments overlap the ones behind them.
+  for (let i = n - 1; i >= 1; i--) {
+    const x = trail[i * 2], y = trail[i * 2 + 1];
+    const px = trail[(i - 1) * 2], py = trail[(i - 1) * 2 + 1];
+    const a = Math.atan2(py - y, px - x);
+    const k = 1 - (i / n) * 0.45;
+    const sr = r * 0.78 * k;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(a);
+    // Legs: a travelling wave, so the body looks like it's walking.
+    ctx.strokeStyle = css(darken(body, 0.35));
+    ctx.lineWidth = Math.max(1.2, sr * 0.14);
+    ctx.lineCap = 'round';
+    const swing = Math.sin(gait * 7 - i * 0.9) * 0.45;
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(0, side * sr * 0.6);
+      ctx.lineTo(swing * sr * side * 0.6, side * sr * 1.35);
+      ctx.stroke();
+    }
+    // Plate.
+    ctx.fillStyle = css(i % 2 ? darken(body, 0.12) : body);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, sr * 0.8, sr, 0, 0, TAU);
+    ctx.fill();
+    ctx.strokeStyle = rgba(accent, 0.45);
+    ctx.lineWidth = Math.max(1, sr * 0.1);
+    ctx.beginPath();
+    ctx.moveTo(-sr * 0.2, -sr * 0.75);
+    ctx.lineTo(-sr * 0.2, sr * 0.75);
+    ctx.stroke();
+    ctx.restore();
+  }
+  // The tail's forcipules — two hooked prongs on the last segment.
+  const tx = trail[(n - 1) * 2], ty = trail[(n - 1) * 2 + 1];
+  const bx = trail[(n - 2) * 2], by = trail[(n - 2) * 2 + 1];
+  const ta = Math.atan2(ty - by, tx - bx);
+  ctx.save();
+  ctx.translate(tx, ty);
+  ctx.rotate(ta);
+  ctx.strokeStyle = css(accent);
+  ctx.lineWidth = Math.max(1.2, r * 0.08);
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(0, side * r * 0.2);
+    ctx.quadraticCurveTo(r * 0.7, side * r * 0.5, r * 0.8, side * r * 0.15);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** Centipede head: armoured, with sweeping antennae and venom claws. */
+function drawCentipedeHead(ctx: Ctx, s: EnemyDrawState, body: number, edge: number) {
+  const r = s.r;
+  // Venom claws, snapping.
+  const bite = 0.35 + Math.sin(s.anim * 8) * 0.25 + (s.casting ? 0.35 : 0);
+  ctx.strokeStyle = css(edge);
+  ctx.lineWidth = Math.max(1.6, r * 0.13);
+  ctx.lineCap = 'round';
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(r * 0.45, side * r * 0.35);
+    ctx.quadraticCurveTo(r * 1.15, side * r * (0.35 + bite * 0.4), r * 1.05, side * r * 0.05);
+    ctx.stroke();
+  }
+  // Antennae, sweeping.
+  ctx.strokeStyle = css(lighten(body, 0.2));
+  ctx.lineWidth = Math.max(1, r * 0.06);
+  for (const side of [-1, 1]) {
+    const sw = Math.sin(s.anim * 3 + side) * 0.25;
+    ctx.beginPath();
+    ctx.moveTo(r * 0.5, side * r * 0.2);
+    ctx.quadraticCurveTo(r * 1.4, side * r * (0.5 + sw), r * 1.9, side * r * (0.9 + sw));
+    ctx.stroke();
+  }
+  // Head plate.
+  ctx.fillStyle = css(body);
+  ctx.beginPath();
+  ctx.ellipse(0, 0, r * 0.75, r * 0.8, 0, 0, TAU);
+  ctx.fill();
+  ctx.fillStyle = css(darken(body, 0.25));
+  ctx.beginPath();
+  ctx.ellipse(-r * 0.1, 0, r * 0.45, r * 0.55, 0, 0, TAU);
+  ctx.fill();
+  // Eyes.
+  ctx.fillStyle = css(edge);
+  for (const sy of [-0.35, 0.35]) {
+    ctx.beginPath();
+    ctx.arc(r * 0.45, sy * r, r * 0.12, 0, TAU);
+    ctx.fill();
+  }
+}
+
+/**
+ * Spider (the Weaver): a bulbous abdomen with a glowing hourglass, a smaller
+ * cephalothorax studded with eyes, and eight long legs in an alternating gait.
+ */
+function drawSpider(ctx: Ctx, s: EnemyDrawState, body: number, edge: number) {
+  const r = s.r;
+  // Eight legs, two sets of four stepping out of phase.
+  ctx.strokeStyle = css(darken(body, 0.2));
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 4; i++) {
+      const base = -0.55 + i * 0.36;                        // along the body, rear→front
+      const step = Math.sin(s.gait * 5 + i * Math.PI * 0.5 + (side > 0 ? Math.PI : 0)) * 0.22;
+      const kneeX = r * (base + step) * 1.1;
+      const kneeY = side * r * 1.05;
+      const footX = r * (base * 1.9 + step * 1.6);
+      const footY = side * r * 1.75;
+      ctx.lineWidth = Math.max(1.6, r * 0.09);
+      ctx.beginPath();
+      ctx.moveTo(r * base * 0.5, side * r * 0.25);
+      ctx.lineTo(kneeX, kneeY);
+      ctx.lineTo(footX, footY);
+      ctx.stroke();
+    }
+  }
+  // Abdomen, breathing slightly.
+  const pulse = 1 + Math.sin(s.anim * 2) * 0.04;
+  ctx.fillStyle = css(body);
+  ctx.beginPath();
+  ctx.ellipse(-r * 0.55, 0, r * 0.75 * pulse, r * 0.62 * pulse, 0, 0, TAU);
+  ctx.fill();
+  // Hourglass marking — flares while she winds up a web.
+  ctx.fillStyle = rgba(edge, s.casting ? 0.95 : 0.6);
+  ctx.beginPath();
+  ctx.moveTo(-r * 0.85, -r * 0.18);
+  ctx.lineTo(-r * 0.25, r * 0.18);
+  ctx.lineTo(-r * 0.25, -r * 0.18);
+  ctx.lineTo(-r * 0.85, r * 0.18);
+  ctx.closePath();
+  ctx.fill();
+  // Cephalothorax.
+  ctx.fillStyle = css(lighten(body, 0.08));
+  ctx.beginPath();
+  ctx.ellipse(r * 0.25, 0, r * 0.42, r * 0.36, 0, 0, TAU);
+  ctx.fill();
+  // Eyes: a cluster of small glints.
+  ctx.fillStyle = css(edge);
+  for (const [ex, ey, er] of [[0.52, -0.12, 0.07], [0.52, 0.12, 0.07], [0.44, -0.24, 0.05],
+    [0.44, 0.24, 0.05], [0.6, 0, 0.05]] as const) {
+    ctx.beginPath();
+    ctx.arc(r * ex, r * ey, r * er, 0, TAU);
+    ctx.fill();
+  }
+  // Fangs.
+  ctx.strokeStyle = css(lighten(body, 0.3));
+  ctx.lineWidth = Math.max(1.2, r * 0.07);
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(r * 0.62, side * r * 0.1);
+    ctx.lineTo(r * 0.8, side * r * 0.05);
+    ctx.stroke();
   }
 }
 
@@ -994,7 +1166,8 @@ function drawTargetingPip(ctx: Ctx, b: Building, half: number) {
  * across the map without reading a number.
  */
 function drawMissileRack(ctx: Ctx, b: Building, half: number, recoil: number, accent: number) {
-  const reload = 1 - Math.min(1, Math.max(0, b.cooldown) / Math.max(0.001, 1 / (b.def.fireRate ?? 1)));
+  const rate = (b.def.fireRate ?? 1) * b.upgrade.rate;
+  const reload = 1 - Math.min(1, Math.max(0, b.cooldown) / Math.max(0.001, 1 / rate));
 
   // Elevated launch box.
   ctx.fillStyle = css(0x2b3446);

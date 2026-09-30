@@ -5,6 +5,7 @@ import { LEVELS, levelName } from '../data/levels';
 import { applyPerk } from '../data/perks';
 import { ARMOR_TIERS, type WeaponKind } from '../data/loadout';
 import { TECH_CARDS } from '../data/tech';
+import { applySynergies } from '../data/synergies';
 import { TILE } from './world';
 import { WaveDirector } from './waves';
 import { RUN_SNAPSHOT_VERSION, type RunSnapshot } from '../core/save';
@@ -43,7 +44,10 @@ export function buildSnapshot(game: Game): RunSnapshot {
     armorTier: game.player.armorTier,
     buildings: game.buildings.map((b) => ({
       k: b.kind, tx: b.tx, ty: b.ty, hp: Math.round(b.hp),
+      ...(b.level > 1 ? { lv: b.level } : {}),
+      ...(b.branch ? { br: b.branch } : {}),
     })),
+    strike: Math.round(game.strike.charge * 10) / 10,
     nodes: game.world.nodes.map((n) => Math.round(n.amount)),
     stats: {
       kills: game.runStats.kills,
@@ -88,6 +92,7 @@ export function applySnapshot(game: Game, snap: RunSnapshot): boolean {
     const card = TECH_CARDS.find((c) => c.id === id);
     if (card?.perk) applyPerk(game.perks, card.perk);
   }
+  applySynergies(game.perks, game.techTaken);
 
   const armorHpBonus = ARMOR_TIERS[game.player.armorTier]?.hpBonus ?? 0;
   game.core.maxHp = Math.round(CORE_BASE_HP * game.perks.coreHp);
@@ -102,6 +107,7 @@ export function applySnapshot(game: Game, snap: RunSnapshot): boolean {
   game.player.y = clamp(snap.playerY, TILE, game.world.pxH - TILE);
 
   game.ore = Math.max(0, snap.ore);
+  game.strike.charge = Math.max(0, snap.strike ?? 0);
   game.essence = Math.max(0, snap.essence);
 
   // Restore drained seams before structures, so an extractor can re-bind.
@@ -115,7 +121,8 @@ export function applySnapshot(game: Game, snap: RunSnapshot): boolean {
   for (const b of snap.buildings) {
     const def = BUILDINGS[b.k as BuildingKind];
     if (!def) continue;
-    game.restoreBuilding(def, b.tx, b.ty, b.hp);
+    const branch = b.br === 'rapid' || b.br === 'range' ? b.br : null;
+    game.restoreBuilding(def, b.tx, b.ty, b.hp, b.lv ?? 1, branch);
   }
 
   game.runStats = { ...game.runStats, ...snap.stats };

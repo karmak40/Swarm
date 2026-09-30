@@ -51,10 +51,11 @@
 	<array>
 		<string>armv7</string>
 	</array>
-	<!-- Experimental portrait layout — mirrors the Android sensorPortrait lock and
-	     the "orientation": "portrait" now in manifest.webmanifest. Was landscape
-	     only; flip back to LandscapeLeft/Right here (and sensorLandscape in the
-	     Android manifest) to revert. -->
+	<!-- iPhone: portrait only (the HUD and both thumbs need the height).
+	     iPad: any way up — landscape is its natural orientation and the
+	     layout has room; see allowsLandscape() in src/core/platform.ts.
+	     Android has no static lock; phones are locked from code
+	     (lockOrientation() in src/core/native.ts). -->
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
@@ -62,6 +63,9 @@
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>

@@ -2,6 +2,8 @@ import { TAU, clamp } from '../core/math';
 import type { TouchButton, TouchInput } from '../core/touch';
 import { BUILDINGS, buildingDesc, buildingName, type BuildingKind, type TargetingMode } from '../data/buildings';
 import { buildingStats, canHitAir } from './buildingInfo';
+import { branchEffect, branchName } from '../data/upgrades';
+import { clearOfBand, pickHintLane, type HintLane } from './hud';
 import { t as tr } from '../core/i18n';
 import type { Game } from '../game/game';
 import type { Building } from '../game/entities';
@@ -42,6 +44,9 @@ export function wrapLines(ctx: Ctx, parts: string[], sep: string, maxW: number, 
 
 /** Direction buckets for off-screen threat arrows (15° each). */
 const THREAT_BINS = 24;
+
+/** Structure menu entries. 'rapid'/'range' are the level-3 upgrade fork. */
+export type MenuItemId = 'sell' | 'repair' | 'target' | 'close' | 'upgrade' | 'rapid' | 'range';
 /** Max neighbouring buckets folded into one arrow (3 × 15° = 45°). */
 const MERGE_SPAN = 3;
 /** Seconds a damaged off-screen structure keeps its "under attack" ping. */
@@ -60,7 +65,7 @@ export class TouchHud {
   /** Drawer slot rectangles, refreshed each frame for hit-testing. */
   drawerSlots: { kind: BuildingKind; x: number; y: number; w: number; h: number }[] = [];
   /** Context-menu buttons from the last long press. */
-  menuItems: { id: 'sell' | 'repair' | 'target' | 'close'; x: number; y: number; w: number; h: number }[] = [];
+  menuItems: { id: MenuItemId; x: number; y: number; w: number; h: number }[] = [];
   /** World position the context menu refers to. */
   menu: { screenX: number; screenY: number } | null = null;
   /**
@@ -84,7 +89,9 @@ export class TouchHud {
     else this.drawerSlots.length = 0;
     for (const b of touch.buttons) this.button(ctx, game, touch, b);
     if (this.menu) this.contextMenu(ctx, game, w, h, touch.scale);
-    if (touch.placing) {
+    if (game.cursorMode === 'strike') {
+      this.hintPill(ctx, touch, tr('touchHud.strike.aim', 'TAP THE MAP TO CALL THE STRIKE'), 0x9fe8ff, 0x9fe8ff);
+    } else if (touch.placing) {
       this.placementHint(ctx, game, w, h, touch);
       if (!touch.drawerOpen) this.placementCard(ctx, game, touch, w, h);
     } else if (!touch.drawerOpen && !this.menu && game.cursorMode === 'normal'
@@ -318,14 +325,16 @@ export class TouchHud {
         tint = 0xffb347;
         break;
       case 'confirm': {
-        // Green only when the ghost could actually land; a tap on a red ✓
-        // still goes through so Game can say why it can't.
-        glyph = '✓';
-        label = tr('touchHud.button.confirm', 'PLACE');
+        // ✓ only when the ghost could actually land. Blocked shows ⊘ as well
+        // as turning red — green/red alone is the pair red-green colour
+        // blindness can't split. A tap on ⊘ still goes through so Game can
+        // say why it can't.
         const def = game.buildKind ? BUILDINGS[game.buildKind] : null;
         const cost = def ? game.costOf(def) : null;
         const affordable = !!cost && game.ore >= cost.ore && game.essence >= cost.essence;
         ready = game.buildValid && affordable;
+        glyph = ready ? '✓' : '⊘';
+        label = tr('touchHud.button.confirm', 'PLACE');
         tint = ready ? 0x5cf2a0 : 0xff4f5e;
         break;
       }
@@ -336,6 +345,25 @@ export class TouchHud {
       case 'map':
         glyph = '⊞';
         tint = 0x8fa3c0;
+        break;
+      case 'speed':
+        // Shows the current speed; lit while fast-forwarding.
+        glyph = game.speed > 1 ? '×2' : '×1';
+        tint = game.speed > 1 ? 0xffcc55 : 0x8fa3c0;
+        break;
+      case 'strike':
+        // Orbital strike: dim with a charge sweep, lit and pulsing when ready,
+        // a cancel cross while aiming.
+        if (game.cursorMode === 'strike') {
+          glyph = '×';
+          label = tr('touchHud.button.cancel', 'CANCEL');
+          tint = 0xff4f5e;
+        } else {
+          glyph = '▼';
+          label = tr('touchHud.button.strike', 'STRIKE');
+          ready = game.strike.ready;
+          tint = ready ? 0x9fe8ff : 0x2f5680;
+        }
         break;
     }
 
@@ -359,6 +387,23 @@ export class TouchHud {
       ctx.beginPath();
       ctx.arc(b.x, b.y, r, -Math.PI / 2, -Math.PI / 2 + TAU * t);
       ctx.stroke();
+    }
+    // Charge sweep for the strike; a soft pulse once it's ready.
+    if (b.id === 'strike' && game.cursorMode !== 'strike') {
+      if (!ready) {
+        ctx.strokeStyle = rgba(0x9fe8ff, 0.85);
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, r, -Math.PI / 2, -Math.PI / 2 + TAU * game.strike.pct);
+        ctx.stroke();
+      } else {
+        const pulse = 0.5 + 0.5 * Math.sin(game.elapsed * 5);
+        ctx.strokeStyle = rgba(0x9fe8ff, 0.3 + 0.5 * pulse);
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, r + 3 + pulse * 3, 0, TAU);
+        ctx.stroke();
+      }
     }
 
     ctx.fillStyle = rgba(tint, b.held ? 1 : 0.9);
@@ -520,8 +565,9 @@ export class TouchHud {
 
   /**
    * Card for the structure being placed: what it is and what it does, while
-   * the ghost and its range ring are on the map. Bottom-left, clear of the
-   * action column; purely a readout, so it takes no touches.
+   * the ghost and its range ring are on the map. Bottom corner opposite the
+   * action buttons (bottom-left, or bottom-right in the southpaw mirror);
+   * purely a readout, so it takes no touches.
    */
   private placementCard(ctx: Ctx, game: Game, touch: TouchInput, w: number, h: number) {
     if (!game.buildKind) return;
@@ -529,10 +575,15 @@ export class TouchHud {
     const s = touch.scale;
     const ins = touch.insets;
     const build = touch.button('build');
-    const x = Math.round(12 * s) + ins.left;
-    const right = build ? build.x - build.r * 1.4 : w - 12 * s;
-    const cw = Math.min(right - x, 360 * s);
+    // Free span between the screen edge and the Build button, on whichever
+    // side the buttons aren't.
+    const clear = build ? build.r * 1.4 : 0;
+    const spanL = touch.southpaw && build ? build.x + clear : Math.round(12 * s) + ins.left;
+    const spanR = !touch.southpaw && build ? build.x - clear : w - Math.round(12 * s) - ins.right;
+    const cw = Math.min(spanR - spanL, 360 * s);
     if (cw < 140 * s) return;
+    // Hug the outer edge.
+    const x = touch.southpaw ? spanR - cw : spanL;
     const pad = Math.round(10 * s);
     const lineH = Math.round(15 * s);
 
@@ -610,31 +661,38 @@ export class TouchHud {
    */
   private hintPill(ctx: Ctx, touch: TouchInput, msg: string, stroke: number, text: number) {
     const s = touch.scale;
-    const { left, right, top } = this.hintArea;
-    const cx = (left + right) / 2;
-    const maxW = right - left - 32;
     ctx.textAlign = 'center';
     let px = Math.round(13 * s);
     ctx.font = `600 ${px}px ${UI_FONT}`;
     let tw = ctx.measureText(msg).width;
+    // Too long for the lane beside the minimap: drop under it instead.
+    const { left, right, top } = pickHintLane(tw, this.hintArea, this.hintAreaWide);
+    const cx = (left + right) / 2;
+    const maxW = right - left - 32;
     if (tw > maxW) {
       px = Math.max(Math.round(10 * s), Math.floor(px * maxW / tw));
       ctx.font = `600 ${px}px ${UI_FONT}`;
       tw = Math.min(ctx.measureText(msg).width, maxW);
     }
     const bh = Math.round(30 * s);
+    // The sector/wave banner owns the middle band while it's up.
+    const y = clearOfBand(top, bh, this.bannerBand);
     ctx.fillStyle = 'rgba(4,7,12,0.9)';
-    techRect(ctx, cx - tw / 2 - 16, top, tw + 32, bh, 8);
+    techRect(ctx, cx - tw / 2 - 16, y, tw + 32, bh, 8);
     ctx.fill();
     ctx.strokeStyle = rgba(stroke, 0.6);
     ctx.lineWidth = 1;
     ctx.stroke();
     ctx.fillStyle = css(text);
-    ctx.fillText(msg, cx, top + bh / 2, maxW);
+    ctx.fillText(msg, cx, y + bh / 2, maxW);
   }
 
   /** Set each frame from `Hud.hintArea`: the lane under the top HUD for hints. */
-  hintArea = { left: 12, right: 363, top: 100 };
+  hintArea: HintLane = { left: 12, right: 363, top: 100 };
+  /** Set each frame from `Hud.bannerBand`: where the banner is, so hints can clear it. */
+  bannerBand: { top: number; bottom: number } | null = null;
+  /** Set each frame from `Hud.hintAreaWide`: the full-width lane under the minimap. */
+  hintAreaWide: HintLane | null = null;
 
   /* ---- long-press context menu ---------------------------------------- */
 
@@ -679,7 +737,7 @@ export class TouchHud {
     // Structure destroyed while the menu was open.
     if (!b || b.dead) { this.closeMenu(); return; }
 
-    const itemW = Math.round(148 * s);
+    const itemW = Math.round(172 * s);
     const itemH = Math.round(44 * s);
     const gap = Math.round(6 * s);
     // Extra space above SELL so it is never one slip away from REPAIR.
@@ -687,10 +745,30 @@ export class TouchHud {
     const headerH = Math.round(28 * s);
     const armed = this.sellArmed;
     const refund = game.sellValue(b);
+    const upCost = game.upgradeCost(b);
+    const canAfford = !!upCost && game.ore >= upCost.ore && game.essence >= upCost.essence;
 
-    const items: { id: 'sell' | 'repair' | 'target' | 'close'; text: string; tint: number }[] = [
+    type Item = { id: MenuItemId; text: string; tint: number; sub?: string; cost?: string; dim?: boolean };
+    const costText = upCost
+      ? (upCost.essence > 0 ? `◆${upCost.ore} ✦${upCost.essence}` : `◆${upCost.ore}`)
+      : '';
+    const items: Item[] = [
       { id: 'repair', text: tr('touchHud.menu.repair', 'REPAIR'), tint: 0x5cf2a0 },
     ];
+    // Upgrades (turrets only; see data/upgrades.ts). Level 2 forks in two.
+    if (upCost && b.level === 1) {
+      items.push({
+        id: 'upgrade', text: tr('touchHud.menu.upgrade', 'UPGRADE'), tint: 0xffcc55,
+        sub: tr('touchHud.menu.upgradeEffect', '+30% damage, +25% hull'), cost: costText, dim: !canAfford,
+      });
+    } else if (upCost && b.level === 2) {
+      for (const br of ['rapid', 'range'] as const) {
+        items.push({
+          id: br, text: branchName(br).toUpperCase(), tint: br === 'rapid' ? 0xffb347 : 0x7fd9ff,
+          sub: branchEffect(br), cost: costText, dim: !canAfford,
+        });
+      }
+    }
     if (b.isTurret) items.push({ id: 'target', text: this.targetingLabel(b.targeting), tint: 0x46d8ff });
     items.push({ id: 'close', text: tr('touchHud.menu.close', 'CLOSE'), tint: 0x8fa3c0 });
     items.push({
@@ -703,7 +781,7 @@ export class TouchHud {
     const x = clamp(this.menu!.screenX + 20 * s, 10, w - itemW - 10);
     const y = clamp(this.menu!.screenY - totalH / 2, this.hintArea.top + headerH, h - totalH - 90 * s);
 
-    // Header: what we are acting on.
+    // Header: what we are acting on, and its level once upgraded.
     ctx.textAlign = 'left';
     ctx.font = `600 ${Math.round(12 * s)}px ${UI_FONT}`;
     ctx.fillStyle = 'rgba(4,7,12,0.94)';
@@ -713,39 +791,64 @@ export class TouchHud {
     ctx.lineWidth = 1;
     ctx.stroke();
     ctx.fillStyle = css(0xe7f0ff);
-    ctx.fillText(buildingName(b.def).toUpperCase().slice(0, 16), x + 10 * s, y - headerH / 2 - 4 * s);
+    const title = buildingName(b.def).toUpperCase();
+    const lv = b.isTurret ? tr('touchHud.menu.level', 'LV{n}', { n: b.level }) : '';
+    ctx.fillText(title, x + 10 * s, y - headerH / 2 - 4 * s, itemW - 20 * s - (lv ? 34 * s : 0));
+    if (lv) {
+      ctx.textAlign = 'right';
+      ctx.fillStyle = css(0xffcc55);
+      ctx.fillText(lv, x + itemW - 10 * s, y - headerH / 2 - 4 * s);
+    }
 
     let iy = y;
     for (const it of items) {
       if (it.id === 'sell') iy += sellGap;
       this.menuItems.push({ id: it.id, x, y: iy, w: itemW, h: itemH });
       const hot = it.id === 'sell' && armed;
+      ctx.globalAlpha = it.dim ? 0.55 : 1;
       ctx.fillStyle = hot ? rgba(0xff4f5e, 0.28) : 'rgba(8,13,22,0.95)';
       techRect(ctx, x, iy, itemW, itemH, 8);
       ctx.fill();
       ctx.strokeStyle = rgba(it.tint, hot ? 1 : 0.5);
       ctx.lineWidth = hot ? 2 : 1.4;
       ctx.stroke();
-      ctx.fillStyle = css(hot ? 0xffd4d8 : it.tint);
-      ctx.font = `600 ${Math.round(13 * s)}px ${UI_FONT}`;
-      ctx.textAlign = 'left';
-      ctx.fillText(it.text, x + 12 * s, iy + itemH / 2);
 
-      // Right-aligned detail: repair state, or what the sale returns.
-      let detail = '';
+      // Right-aligned detail: repair state, upgrade price, or what the sale returns.
+      let detail = it.cost ?? '';
+      let detailColor = 0x8fa3c0;
       if (it.id === 'repair') {
         detail = tr('touchHud.menu.repairPercent', '{pct}%', { pct: Math.round(b.pct * 100) });
       } else if (it.id === 'sell') {
         detail = refund.essence > 0
           ? tr('touchHud.menu.sellRefundEssence', '+{ore}◆ +{essence}✦', refund)
           : tr('touchHud.menu.sellRefund', '+{ore}◆', refund);
+      } else if (it.cost) {
+        detailColor = it.dim ? 0xff4f5e : 0x7fd9ff;
       }
+      ctx.font = `500 ${Math.round(11 * s)}px ${MONO}`;
+      const detailW = detail ? ctx.measureText(detail).width + 8 * s : 0;
+
+      ctx.textAlign = 'left';
+      ctx.font = `600 ${Math.round(13 * s)}px ${UI_FONT}`;
+      ctx.fillStyle = css(hot ? 0xffd4d8 : it.tint);
+      const textMax = itemW - 24 * s - detailW;
+      if (it.sub) {
+        // Two lines: the action, and what it does.
+        ctx.fillText(it.text, x + 12 * s, iy + itemH * 0.36, textMax);
+        ctx.font = `500 ${Math.round(10 * s)}px ${UI_FONT}`;
+        ctx.fillStyle = css(0x8fa3c0);
+        ctx.fillText(it.sub, x + 12 * s, iy + itemH * 0.72, itemW - 24 * s);
+      } else {
+        ctx.fillText(it.text, x + 12 * s, iy + itemH / 2, textMax);
+      }
+
       if (detail) {
         ctx.textAlign = 'right';
         ctx.font = `500 ${Math.round(11 * s)}px ${MONO}`;
-        ctx.fillStyle = css(0x8fa3c0);
-        ctx.fillText(detail, x + itemW - 12 * s, iy + itemH / 2);
+        ctx.fillStyle = css(detailColor);
+        ctx.fillText(detail, x + itemW - 12 * s, it.sub ? iy + itemH * 0.36 : iy + itemH / 2);
       }
+      ctx.globalAlpha = 1;
       iy += itemH + gap;
     }
   }

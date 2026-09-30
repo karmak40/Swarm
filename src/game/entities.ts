@@ -1,6 +1,7 @@
 import type { BuildingDef, BuildingKind, TargetingMode } from '../data/buildings';
-import type { EnemyDef } from '../data/enemies';
+import type { EliteAffix, EnemyDef } from '../data/enemies';
 import type { WeaponKind } from '../data/loadout';
+import { upgradeMul, type UpgradeBranch, type UpgradeMul } from '../data/upgrades';
 
 /** Everything in the world shares these fields so systems can treat them alike. */
 export interface Body {
@@ -62,6 +63,8 @@ export class Player implements Body {
   hitFlash = 0;
   invuln = 0;
   dashCooldown = 0;
+  /** Seconds left stuck in a Weaver's web: movement heavily slowed (dash still works). */
+  webbed = 0;
   dashTime = 0;
   dashDirX = 0;
   dashDirY = 0;
@@ -151,6 +154,14 @@ export class Building implements Body {
   depositFlash = 0;
   /** Powered fraction this frame, 0..1. */
   efficiency = 1;
+  /** Seconds left under a Weaver's web: a webbed turret doesn't fire. */
+  webbed = 0;
+  /** Turret upgrade level, 1..MAX_BUILDING_LEVEL; see data/upgrades.ts. */
+  level = 1;
+  /** The level-3 fork taken, if any. */
+  branch: UpgradeBranch | null = null;
+  /** Stat multipliers from `level`/`branch` (on top of global perks). */
+  get upgrade(): UpgradeMul { return upgradeMul(this.level, this.branch); }
   /** Cosmetic idle offset so identical buildings don't animate in lockstep. */
   phase: number;
 
@@ -196,6 +207,17 @@ export class Enemy implements Body {
   /** Boss / elite flags. */
   boss: boolean;
   elite = false;
+  /** The elite modifier rolled at spawn (null for non-elites); see data/enemies.ts. */
+  affix: EliteAffix | null = null;
+  /** `Game.elapsed` of the last hit — the regen affix waits for a lull. */
+  lastHitAt = -Infinity;
+  /** Set by the 'burrow' ability: erupt with a slam when the dive ends. */
+  emergeSlam = false;
+  /**
+   * Centipede shapes: recent head positions (x, y pairs, newest first) that
+   * the body segments trail along. Null for every other shape.
+   */
+  trail: number[] | null = null;
 
   angle = 0;
   attackCooldown = 0;
@@ -264,11 +286,12 @@ export class Enemy implements Body {
     this.damage = def.damage * dmgMult;
     this.boss = !!def.boss;
     if (def.abilities) this.abilityCd = def.abilities.map((a) => a.cooldown * 0.5);
+    if (def.shape === 'centipede') this.trail = [x, y];
   }
 
   get effectiveSpeed() {
     if (this.stunTimer > 0) return 0;
-    return this.speed * (this.slowTimer > 0 ? this.slowFactor : 1);
+    return this.speed * (this.slowTimer > 0 ? this.slowFactor : 1) * (this.affix === 'swift' ? 1.45 : 1);
   }
 
   get flying() { return this.def.behavior === 'flyer' || !!this.def.flies; }
@@ -333,7 +356,9 @@ export class Drone implements Body {
 /* -------------------------------------------------------------------------- */
 
 export type ProjKind =
-  | 'bullet' | 'shell' | 'flak' | 'mortar' | 'rocket' | 'spit' | 'bossOrb' | 'plasma';
+  | 'bullet' | 'shell' | 'flak' | 'mortar' | 'rocket' | 'spit' | 'bossOrb' | 'plasma'
+  /** Weaver web glob: webs the turret or pilot it hits instead of doing real damage. */
+  | 'web';
 
 export class Projectile implements Body {
   x = 0;

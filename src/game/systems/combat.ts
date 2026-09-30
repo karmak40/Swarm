@@ -9,6 +9,10 @@ import { TILE } from '../world';
 import type { Game } from '../game';
 
 const MAX_PROJECTILES = 900;
+/** How long a Weaver web silences a turret it lands on. */
+export const WEB_TURRET_SECONDS = 4;
+/** How long a web slows the pilot. */
+export const WEB_PLAYER_SECONDS = 2.5;
 
 /**
  * Projectile lifecycle (pooled — see `getProjectile`) and the area-damage
@@ -261,6 +265,14 @@ export class CombatSystem {
     const b = g.buildingAtTile(tx, ty);
     if (b) {
       if (g.absorbIntoField(p.x, p.y, p.damage)) { p.dead = true; return; }
+      if (p.kind === 'web') {
+        // Webs don't break structures; they gum turrets up.
+        if (b.isTurret) b.webbed = Math.max(b.webbed, WEB_TURRET_SECONDS);
+        g.damageBuilding(b, p.damage);
+        g.particles.ring(p.x, p.y, 14, 0xe8f0ff, 0.35);
+        p.dead = true;
+        return;
+      }
       if (p.splash > 0) { this.detonate(p); p.dead = true; return; }
       g.damageBuilding(b, p.damage);
       g.particles.impact(p.x, p.y, Math.atan2(p.vy, p.vx), p.color, 1);
@@ -279,7 +291,8 @@ export class CombatSystem {
       const rp = g.player.radius + p.radius;
       if (dist2(p.x, p.y, g.player.x, g.player.y) < rp * rp) {
         if (g.absorbIntoField(p.x, p.y, p.damage)) { p.dead = true; return; }
-        if (p.splash > 0) { this.detonate(p); p.dead = true; return; }
+        if (p.kind === 'web') g.player.webbed = Math.max(g.player.webbed, WEB_PLAYER_SECONDS);
+        else if (p.splash > 0) { this.detonate(p); p.dead = true; return; }
         g.damagePlayer(p.damage);
         p.dead = true;
       }

@@ -4,7 +4,7 @@ import {
 } from '../../core/math';
 import { PKind } from '../../engine/particles';
 import type { SpatialHash } from '../../engine/spatial';
-import { ENEMIES, type EnemyDef } from '../../data/enemies';
+import { ELITE_AFFIXES, ENEMIES, type EnemyDef } from '../../data/enemies';
 import { Building, Enemy } from '../entities';
 import { HAZARD_DPS, TILE, Tile } from '../world';
 import type { Game } from '../game';
@@ -31,7 +31,16 @@ export class EnemySystem {
   spawnEnemy(def: EnemyDef, x: number, y: number, hpMult: number, dmgMult: number, elite: boolean): Enemy {
     const e = new Enemy(def, x, y, hpMult * (elite ? 1.9 : 1), dmgMult * (elite ? 1.4 : 1));
     e.elite = elite;
-    if (elite) e.radius *= 1.18;
+    if (elite) {
+      e.radius *= 1.18;
+      // Every elite rolls a modifier (data/enemies.ts ELITE_AFFIXES). Seeded
+      // RNG, so a replayed seed gets the same elites.
+      e.affix = ELITE_AFFIXES[Math.floor(this.game.rng.next() * ELITE_AFFIXES.length)];
+      if (e.affix === 'shielded') {
+        e.shieldMax = Math.round(e.maxHp * 0.6);
+        e.shieldHp = e.shieldMax;
+      }
+    }
     this.enemies.push(e);
     return e;
   }
@@ -79,6 +88,47 @@ export class EnemySystem {
         if (chance(dt * 10)) {
           g.particles.spawn(e.x + rand(-6, 6), e.y + rand(-6, 6), rand(-10, 10), rand(-50, -20),
             rand(0.2, 0.5), rand(2, 4), g.level.palette.hazardColor, PKind.Ember);
+        }
+      }
+
+      // Regen elites knit back together once they've gone a moment unhit.
+      if (e.affix === 'regen' && e.hp < e.maxHp && g.elapsed - e.lastHitAt > 1.5) {
+        e.hp = Math.min(e.maxHp, e.hp + e.maxHp * 0.06 * dt);
+        if (chance(dt * 6)) {
+          g.particles.spawn(e.x + rand(-e.radius, e.radius), e.y + rand(-e.radius, e.radius),
+            0, rand(-40, -20), rand(0.3, 0.6), rand(2, 3), 0x5cf2a0, PKind.Glow);
+        }
+      }
+
+      // Centipede bodies: remember where the head has been so the segments
+      // can trail along the same path (render only — the unit is its head).
+      if (e.trail) {
+        const seg = e.radius * 0.95;
+        const maxPts = e.boss ? 16 : 4;
+        if (dist2(e.x, e.y, e.trail[0], e.trail[1]) >= seg * seg) {
+          e.trail.unshift(e.x, e.y);
+          if (e.trail.length > maxPts * 2) e.trail.length = maxPts * 2;
+        }
+      }
+
+      // An ability dive (the Scolopendra's 'burrow') — ordinary burrowers run
+      // their own cycle below. Surfacing may erupt with a slam.
+      if (e.submerged && e.def.behavior !== 'burrower') {
+        e.burrowTimer -= dt;
+        if (chance(dt * 20)) g.particles.dust(e.x, e.y, g.level.palette.rockLit, 2);
+        if (e.burrowTimer <= 0) {
+          e.submerged = false;
+          if (e.emergeSlam) {
+            e.emergeSlam = false;
+            g.explode(e.x, e.y, 170, e.damage * 2.2, 'hive');
+            g.effects.push({
+              kind: 'shock', x: e.x, y: e.y, x2: 0, y2: 0,
+              radius: 170, life: 0.5, maxLife: 0.5, color: e.def.accent, width: 8, seed: 0,
+            });
+            g.particles.explosion(e.x, e.y, 60, e.def.accent, g.level.palette.rock);
+            audio.play('explodeBig');
+            g.shake(18);
+          }
         }
       }
 
@@ -468,6 +518,10 @@ export class EnemySystem {
       // Only cast when it can matter.
       if (ab.id === 'slam' && dist(e.x, e.y, g.core.x, g.core.y) > 420 &&
           !this.nearestBuilding(e.x, e.y, 260) && dist(e.x, e.y, g.player.x, g.player.y) > 320) continue;
+      // Nothing new while diving or mid-charge; webs only with something to web.
+      if (e.submerged) continue;
+      if ((ab.id === 'burrow' || ab.id === 'charge') && e.chargeTimer > 0) continue;
+      if (ab.id === 'web' && this.webTargets(e, ab.value).length === 0) continue;
       e.abilityCd[i] = ab.cooldown;
       e.castingIndex = i;
       e.castTimer = ab.telegraph;
@@ -483,10 +537,68 @@ export class EnemySystem {
     }
   }
 
+  /**
+   * Who a Weaver web volley goes for: the nearest working turrets within
+   * range (silencing guns is the point), plus the pilot if in reach.
+   */
+  private webTargets(e: Enemy, count: number): { x: number; y: number }[] {
+    const g = this.game;
+    const range = 560;
+    const turrets = g.buildings
+      .filter((b) => b.isTurret && b.built && !b.dead && b.webbed <= 0 && dist(e.x, e.y, b.x, b.y) <= range)
+      .sort((a, b) => dist2(e.x, e.y, a.x, a.y) - dist2(e.x, e.y, b.x, b.y));
+    const out: { x: number; y: number }[] = [];
+    const playerInReach = !g.player.dead && dist(e.x, e.y, g.player.x, g.player.y) <= range;
+    for (const b of turrets) {
+      if (out.length >= count - (playerInReach ? 1 : 0)) break;
+      out.push(b);
+    }
+    if (playerInReach) out.push(g.player);
+    return out;
+  }
+
   private resolveBossAbility(e: Enemy, index: number) {
     const g = this.game;
     const ab = e.def.abilities![index];
     switch (ab.id) {
+      case 'burrow': {
+        // Dive: untargetable and straight through walls (see enemyDesire),
+        // then erupt with a slam where it surfaces (updateEnemies).
+        e.submerged = true;
+        e.burrowTimer = ab.value;
+        e.emergeSlam = true;
+        g.particles.dust(e.x, e.y, g.level.palette.rockLit, 24);
+        audio.play('explode', 0.6);
+        g.shake(10);
+        break;
+      }
+      case 'shed': {
+        // Live segments peel off the tail and keep coming.
+        const def = ENEMIES.centipedeling;
+        for (let i = 0; i < ab.value; i++) {
+          const tx = e.trail ? e.trail[Math.min(e.trail.length - 2, (i + 2) * 2)] : e.x;
+          const ty = e.trail ? e.trail[Math.min(e.trail.length - 1, (i + 2) * 2 + 1)] : e.y;
+          const at = g.world.findOpenNear(tx + rand(-10, 10), ty + rand(-10, 10));
+          const child = this.spawnEnemy(def, at.x, at.y, g.plan?.hpMult ?? 1, g.plan?.dmgMult ?? 1, false);
+          child.wave = g.waveIndex;
+          child.spawnedBy = e.id;
+          g.particles.ring(child.x, child.y, 16, def.accent, 0.3);
+        }
+        audio.play('bossRoar', 1.2);
+        g.shake(8);
+        break;
+      }
+      case 'web': {
+        for (const t of this.webTargets(e, ab.value)) {
+          g.fire({
+            x: e.x, y: e.y, angle: Math.atan2(t.y - e.y, t.x - e.x), speed: 340,
+            damage: 6, kind: 'web', faction: 'hive', color: 0xe8f0ff, size: 7,
+            life: 2.6, armorPierce: 0, ownerId: e.id, splash: 0,
+          });
+        }
+        audio.play('shootHeavy', 1.4);
+        break;
+      }
       case 'slam': {
         g.explode(e.x, e.y, 210, ab.value, 'hive');
         g.effects.push({
@@ -565,7 +677,8 @@ export class EnemySystem {
     e: Enemy,
     amount: number,
     opts: {
-      source: 'turret' | 'player' | 'burn';
+      /** 'ability' = the orbital strike: credited to neither turrets nor the player's gun. */
+      source: 'turret' | 'player' | 'burn' | 'ability';
       armorPierce?: number;
       building?: Building;
       dirX?: number; dirY?: number;
@@ -574,6 +687,7 @@ export class EnemySystem {
   ) {
     const g = this.game;
     if (e.dead) return;
+    e.lastHitAt = g.elapsed;
     const pierce = (opts.armorPierce ?? 0) + g.perks.armorShred;
     let dmg = mitigate(amount, e.armor, pierce);
 
@@ -613,17 +727,27 @@ export class EnemySystem {
     }
 
     if (e.hp <= 0) {
-      this.killEnemy(e, opts.source === 'player' ? 'player' : 'turret', true);
+      this.killEnemy(e,
+        opts.source === 'player' ? 'player' : opts.source === 'ability' ? 'ability' : 'turret', true);
       if (opts.building) opts.building.kills++;
     }
   }
 
-  private killEnemy(e: Enemy, by: 'player' | 'turret' | 'self', reward: boolean) {
+  private killEnemy(e: Enemy, by: 'player' | 'turret' | 'self' | 'ability', reward: boolean) {
     const g = this.game;
     if (e.dead) return;
     e.dead = true;
     g.killedThisWave++;
     g.runStats.kills++;
+    // Real kills charge the orbital strike — not self-destructs, not its own victims.
+    if (reward && by !== 'self' && by !== 'ability') g.strike.onKill(e);
+    // Volatile elites go up when they die: kill them before they reach the line.
+    if (e.affix === 'volatile') {
+      g.explode(e.x, e.y, 70, 26 + e.damage * 1.5, 'hive');
+      g.particles.explosion(e.x, e.y, 40, 0xff6b3d, g.level.palette.rock);
+      audio.play('explode');
+      g.shake(5);
+    }
     g.progress.bump('kill');
     g.progress.recordRunStat('kills', 1);
     if (by === 'player') g.progress.bump('meleeKills');

@@ -6,6 +6,7 @@ import { applyPerk } from '../../data/perks';
 import { ENEMIES, enemyName, enemyDesc } from '../../data/enemies';
 import { LEVELS } from '../../data/levels';
 import { RARITY_WEIGHT, TECH_CARDS, techName, techDesc, type TechCard } from '../../data/tech';
+import { SYNERGIES, synergyCounts, synergyTitle, tierBonusText, tiersReached } from '../../data/synergies';
 import { TILE } from '../world';
 import type { WavePlan } from '../waves';
 import { CORE_BASE_HP, PLAYER_BASE_HP, type Game } from '../game';
@@ -275,8 +276,14 @@ export class WaveSystem {
 
   takeTech(card: TechCard) {
     const g = this.game;
+    const tiersBefore = tiersReached(card.tag, synergyCounts(g.techTaken)[card.tag]);
     g.techTaken.push(card.id);
     if (card.perk) applyPerk(g.perks, card.perk);
+    // Completing a synergy tier switches its set bonus on (data/synergies.ts).
+    // Applied before the maxima re-derive below, so hull/core bonuses land now.
+    const tiersAfter = tiersReached(card.tag, synergyCounts(g.techTaken)[card.tag]);
+    for (let i = tiersBefore; i < tiersAfter; i++) applyPerk(g.perks, SYNERGIES[card.tag].tiers[i].perk);
+    const newTier = tiersAfter > tiersBefore ? tiersAfter : 0;
     if (card.unlock) g.unlockedBuildings.add(card.unlock);
 
     switch (card.effect) {
@@ -303,7 +310,8 @@ export class WaveSystem {
       g.core.maxHp = newCoreMax;
     }
     for (const b of g.buildings) {
-      const nm = Math.round(b.def.hp * g.perks.structureHp);
+      // Keep an upgraded turret's bigger hull (data/upgrades.ts) through the re-derive.
+      const nm = Math.round(b.def.hp * g.perks.structureHp * b.upgrade.hp);
       if (nm !== b.maxHp) {
         const ratio = b.hp / b.maxHp;
         b.maxHp = nm;
@@ -314,7 +322,13 @@ export class WaveSystem {
     g.pendingDraft = null;
     g.frozen = false;
     audio.play('levelUp');
-    g.setBanner(techName(card).toUpperCase(), techDesc(card), 3, '#b47cff');
+    if (newTier) {
+      // A completed set outranks the card itself in the banner.
+      g.setBanner(synergyTitle(card.tag, newTier).toUpperCase(), tierBonusText(card.tag, newTier - 1), 3.5,
+        `#${SYNERGIES[card.tag].color.toString(16).padStart(6, '0')}`);
+    } else {
+      g.setBanner(techName(card).toUpperCase(), techDesc(card), 3, '#b47cff');
+    }
   }
 
   private spawnFromGate(enemyId: string, gate: number, plan: WavePlan, elite: boolean) {

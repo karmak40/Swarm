@@ -58,9 +58,46 @@ export const isStandalone = () =>
   matchMedia('(display-mode: standalone)').matches ||
   (navigator as unknown as { standalone?: boolean }).standalone === true;
 
-/** Landscape is effectively required: the HUD needs the horizontal room. */
 export function isPortrait(): boolean {
   return window.innerHeight > window.innerWidth;
+}
+
+/**
+ * Short side, in CSS px, from which a touch screen is a tablet. Phones top
+ * out around 430 (even big ones in landscape); tablets start around 600.
+ */
+export const TABLET_SHORT_SIDE = 600;
+
+/**
+ * The window has room to play in landscape. Phones are portrait-only — a
+ * ~390px-tall landscape view leaves no room for the HUD and both thumbs —
+ * but a tablet's landscape is its natural way up. Window-based, so an iPad
+ * in narrow split view is treated like the phone-sized window it is.
+ */
+export function allowsLandscape(): boolean {
+  return Math.min(window.innerWidth, window.innerHeight) >= TABLET_SHORT_SIDE;
+}
+
+/**
+ * Extra interface scale for the screen size, on top of the player's own
+ * setting. The touch HUD is authored for a ~390px-wide phone; on a tablet it
+ * came out phone-sized — technically fine, but tiny at arm's length. Grows
+ * with the window's short side from the tablet threshold, capped so a big
+ * tablet doesn't get cartoonish controls. Window-based, like allowsLandscape.
+ */
+export function deviceUiScale(): number {
+  const shortSide = Math.min(window.innerWidth, window.innerHeight);
+  if (shortSide < TABLET_SHORT_SIDE) return 1;
+  return Math.min(1.35, shortSide / TABLET_SHORT_SIDE);
+}
+
+/**
+ * The device itself is tablet-sized. Screen-based rather than window-based,
+ * for the OS orientation lock, which must not flip as split view resizes us.
+ */
+export function isTabletDevice(): boolean {
+  if (typeof screen === 'undefined') return false;
+  return Math.min(screen.width, screen.height) >= TABLET_SHORT_SIDE;
 }
 
 export interface SafeInsets {

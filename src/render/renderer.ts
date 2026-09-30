@@ -4,10 +4,10 @@ import { Tile, TILE } from '../game/world';
 import type { Game } from '../game/game';
 import { BUILDINGS } from '../data/buildings';
 import { ARMOR_TIERS } from '../data/loadout';
-import type { Player } from '../game/entities';
+import type { Building, Enemy, Player } from '../game/entities';
 import { css, rgba, lighten, darken, mix } from './palette';
 import { QUALITY, readSafeAreaInsets, type Quality, type QualityProfile, type SafeInsets } from '../core/platform';
-import { drawBuilding, drawDrone, drawEnemy, lightning, poly, star, techRect } from './shapes';
+import { drawBuilding, drawCentipedeBody, drawDrone, drawEnemy, lightning, poly, star, techRect } from './shapes';
 
 /**
  * Layered Canvas2D renderer.
@@ -120,6 +120,8 @@ export class Renderer {
     this.drawEnemies(ctx, gctx, game, view);
     this.drawDrones(ctx, gctx, game, view);
     this.drawPlayer(ctx, gctx, game);
+    const pl = game.player;
+    if (pl.webbed > 0 && !pl.dead) this.drawWeb(ctx, pl.x, pl.y, pl.radius * 1.8, Math.min(1, pl.webbed), 3);
     this.drawProjectiles(ctx, gctx, game, view);
     this.drawEffects(ctx, gctx, game, view);
     this.drawParticles(ctx, gctx, game, view, true);
@@ -453,6 +455,20 @@ export class Renderer {
     ctx.stroke();
     ctx.setLineDash([]);
 
+    // A blocked spot is crossed out, not only tinted red: cyan-vs-red is the
+    // whole signal otherwise, and shape survives any colour vision.
+    if (!ok) {
+      const m = size * 0.22;
+      ctx.strokeStyle = rgba(col, 0.9);
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(px + m, py + m);
+      ctx.lineTo(px + size - m, py + size - m);
+      ctx.moveTo(px + size - m, py + m);
+      ctx.lineTo(px + m, py + size - m);
+      ctx.stroke();
+    }
+
     // Footprint tick marks.
     ctx.strokeStyle = rgba(col, 0.5);
     ctx.lineWidth = 1;
@@ -491,7 +507,7 @@ export class Renderer {
       ctx.lineWidth = 1.5;
       ctx.setLineDash([5, 7]);
       ctx.beginPath();
-      ctx.arc(b.x, b.y, b.def.range * game.perks.turretRange, 0, TAU);
+      ctx.arc(b.x, b.y, b.def.range * game.perks.turretRange * b.upgrade.range, 0, TAU);
       ctx.stroke();
       ctx.setLineDash([]);
     }
@@ -517,6 +533,134 @@ export class Renderer {
   }
 
   /* ---- entities -------------------------------------------------------- */
+
+  /**
+   * Elite ring. Shielded: plain gold (its shield ring says the rest). Regen:
+   * green plus signs orbiting. Swift: a fast-spinning dashed ring. Volatile:
+   * a pulsing double ring in hot orange.
+   */
+  private drawAffixMark(ctx: CanvasRenderingContext2D, e: Enemy, t: number) {
+    const r = e.radius * 1.28;
+    ctx.save();
+    switch (e.affix) {
+      case 'regen': {
+        ctx.strokeStyle = rgba(0x5cf2a0, 0.5);
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, r, 0, TAU);
+        ctx.stroke();
+        ctx.strokeStyle = css(0x5cf2a0);
+        ctx.lineWidth = 1.8;
+        const s = Math.max(2.5, e.radius * 0.22);
+        for (let i = 0; i < 4; i++) {
+          const a = t * 1.2 + (i / 4) * TAU;
+          const px = e.x + Math.cos(a) * r, py = e.y + Math.sin(a) * r;
+          ctx.beginPath();
+          ctx.moveTo(px - s, py); ctx.lineTo(px + s, py);
+          ctx.moveTo(px, py - s); ctx.lineTo(px, py + s);
+          ctx.stroke();
+        }
+        break;
+      }
+      case 'swift': {
+        ctx.strokeStyle = rgba(0xffe066, 0.85);
+        ctx.lineWidth = 1.8;
+        ctx.setLineDash([5, 5]);
+        ctx.lineDashOffset = -t * 60;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, r, 0, TAU);
+        ctx.stroke();
+        break;
+      }
+      case 'volatile': {
+        const pulse = 0.5 + 0.5 * Math.sin(t * 9 + e.id);
+        ctx.strokeStyle = rgba(0xff6b3d, 0.45 + 0.5 * pulse);
+        ctx.lineWidth = 2.2;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, r + pulse * 3, 0, TAU);
+        ctx.stroke();
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, r * 0.8, 0, TAU);
+        ctx.stroke();
+        break;
+      }
+      default: {
+        ctx.strokeStyle = rgba(0xffcc55, 0.55);
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, r, 0, TAU);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  /**
+   * A Weaver web stuck over something: radial strands and two rings, a
+   * little irregular per `seed` so neighbouring webs don't look stamped.
+   * Fades out over the last second (`alpha`).
+   */
+  private drawWeb(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, alpha: number, seed: number) {
+    ctx.save();
+    ctx.strokeStyle = rgba(0xf0f4ff, 0.75 * alpha);
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    const spokes = 7;
+    for (let i = 0; i < spokes; i++) {
+      const t = (i / spokes) * TAU + (seed % 7) * 0.2;
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + Math.cos(t) * r, y + Math.sin(t) * r);
+    }
+    for (const k of [0.45, 0.8]) {
+      for (let i = 0; i <= spokes; i++) {
+        const t = (i / spokes) * TAU + (seed % 7) * 0.2;
+        const rr = r * k * (0.9 + 0.1 * Math.sin(i * 2.3 + seed));
+        if (i === 0) ctx.moveTo(x + Math.cos(t) * rr, y + Math.sin(t) * rr);
+        else ctx.lineTo(x + Math.cos(t) * rr, y + Math.sin(t) * rr);
+      }
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /**
+   * Upgrade marks under a turret: one chevron per level above 1. The level-3
+   * branch is tinted (rapid fire amber, long range cyan) and long range also
+   * gets a small ring — colour alone wouldn't survive colour blindness.
+   */
+  private drawLevelMarks(ctx: CanvasRenderingContext2D, b: Building, zoom: number) {
+    const n = b.level - 1;
+    const col = b.branch === 'rapid' ? 0xffb347 : b.branch === 'range' ? 0x7fd9ff : 0xe7f0ff;
+    // Drawn in world units, so zoomed far out (phones sit around 0.5) the
+    // marks would shrink to a few pixels — grow them back toward screen size.
+    const k = clamp(0.9 / zoom, 1, 2);
+    const w = 6 * k, h = 3.5 * k, gap = 3 * k;
+    const x0 = b.x - ((n - 1) * (w * 2 + gap)) / 2 - (b.branch === 'range' ? 5 * k : 0);
+    const y = b.y + b.radius + 5 * k;
+    ctx.save();
+    ctx.lineWidth = 2 * k;
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = rgba(0x000000, 0.7);
+    for (let pass = 0; pass < 2; pass++) {
+      if (pass === 1) { ctx.strokeStyle = css(col); ctx.lineWidth = 1.6 * k; }
+      for (let i = 0; i < n; i++) {
+        const cx = x0 + i * (w * 2 + gap);
+        ctx.beginPath();
+        ctx.moveTo(cx - w, y + h);
+        ctx.lineTo(cx, y - h);
+        ctx.lineTo(cx + w, y + h);
+        ctx.stroke();
+      }
+      if (b.branch === 'range') {
+        const rx = x0 + (n - 1) * (w * 2 + gap) + w + 8 * k;
+        ctx.beginPath();
+        ctx.arc(rx, y, 3.2 * k, 0, TAU);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
 
   private drawBuildings(
     ctx: CanvasRenderingContext2D,
@@ -566,6 +710,9 @@ export class Renderer {
         gctx.arc(b.beamHitX, b.beamHitY, 12 * i, 0, TAU);
         gctx.fill();
       }
+
+      if (b.level > 1) this.drawLevelMarks(ctx, b, game.camera.zoom);
+      if (b.webbed > 0) this.drawWeb(ctx, b.x, b.y, b.radius * 1.25, Math.min(1, b.webbed), b.id);
 
       if (b.shield > 0 && b.maxShield > 0) {
         const s = b.shield / b.maxShield;
@@ -973,6 +1120,12 @@ export class Renderer {
       ctx.ellipse(e.x + 2, e.y + shadowOff, e.radius * 0.9, e.radius * 0.45, 0, 0, TAU);
       ctx.fill();
 
+      // Centipedes: the body trails along the head's recent path, in world
+      // space, underneath the head.
+      if (e.trail && !e.submerged) {
+        drawCentipedeBody(ctx, e.trail, e.radius, e.def.color, e.elite ? 0xffcc55 : e.def.accent, e.gait, e.hitFlash);
+      }
+
       ctx.save();
       ctx.translate(e.x, e.y - (e.flying ? 8 : 0));
       ctx.rotate(e.angle);
@@ -986,14 +1139,9 @@ export class Renderer {
 
       if (e.submerged) continue;
 
-      // Elite trim.
-      if (e.elite) {
-        ctx.strokeStyle = rgba(0xffcc55, 0.55);
-        ctx.lineWidth = 1.6;
-        ctx.beginPath();
-        ctx.arc(e.x, e.y, e.radius * 1.28, 0, TAU);
-        ctx.stroke();
-      }
+      // Elite trim, shaped by its modifier (data/enemies.ts ELITE_AFFIXES) so
+      // each reads at a glance — and by shape, not only colour.
+      if (e.elite) this.drawAffixMark(ctx, e, game.elapsed);
 
       // Status auras.
       if (e.slowTimer > 0) {
@@ -1229,6 +1377,40 @@ export class Renderer {
         gctx.beginPath();
         gctx.arc(p.x, p.y, p.size * 3, 0, TAU);
         gctx.fill();
+        continue;
+      }
+
+      if (p.kind === 'web') {
+        // Weaver web: a spinning glob of strands trailing a thread.
+        if (!this.visible(view, p.x, p.y, p.size * 4)) continue;
+        const a = Math.atan2(p.vy, p.vx);
+        ctx.save();
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.strokeStyle = rgba(0xe8f0ff, 0.35);
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(p.x - Math.cos(a) * 60, p.y - Math.sin(a) * 60);
+        ctx.stroke();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(game.elapsed * 6 + p.x * 0.01);
+        ctx.strokeStyle = rgba(0xf4f8ff, 0.9);
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+          const t = (i / 6) * TAU;
+          ctx.moveTo(0, 0);
+          ctx.lineTo(Math.cos(t) * p.size * 1.8, Math.sin(t) * p.size * 1.8);
+        }
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(0, 0, p.size * 1.1, 0, TAU);
+        ctx.stroke();
+        ctx.fillStyle = rgba(0xffffff, 0.85);
+        ctx.beginPath();
+        ctx.arc(0, 0, p.size * 0.5, 0, TAU);
+        ctx.fill();
+        ctx.restore();
         continue;
       }
 

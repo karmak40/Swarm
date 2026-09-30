@@ -10,6 +10,7 @@ import {
   type BuildCategory, type BuildingDef, type BuildingKind, type TargetingMode,
 } from '../../data/buildings';
 import { Building, type Enemy, type Projectile } from '../entities';
+import { MAX_BUILDING_LEVEL, upgradeCostFraction, type UpgradeBranch } from '../../data/upgrades';
 import { TILE, Tile } from '../world';
 import type { Game } from '../game';
 
@@ -72,15 +73,17 @@ export class BuildingSystem {
 
   /**
    * Returns null when placement is legal, otherwise a player-facing reason.
-   * `checkPlayer` is turned off when replaying a save: the player's restored
-   * position is irrelevant to whether a structure they placed earlier is valid.
+   * `restoring` is set when replaying a save: the structure was already paid
+   * for, and the player's restored position is irrelevant to whether it's
+   * valid. (Checking cost there used to drop any structure pricier than the
+   * ore the player happened to be holding at save time.)
    */
-  canPlace(def: BuildingDef, tx: number, ty: number, checkPlayer = true): string | null {
+  canPlace(def: BuildingDef, tx: number, ty: number, restoring = false): string | null {
     const g = this.game;
     const world = g.world;
     const cost = this.costOf(def);
-    if (g.ore < cost.ore) return tr('game.place.needOre', 'Need {n} ore', { n: cost.ore });
-    if (g.essence < cost.essence) {
+    if (!restoring && g.ore < cost.ore) return tr('game.place.needOre', 'Need {n} ore', { n: cost.ore });
+    if (!restoring && g.essence < cost.essence) {
       return tr('game.place.needEssence', 'Need {n} essence', { n: cost.essence });
     }
 
@@ -102,7 +105,7 @@ export class BuildingSystem {
       return tr('game.place.tooCloseCore', 'Too close to the core');
     }
     // Don't let the player wall themselves in.
-    if (checkPlayer && !g.player.dead
+    if (!restoring && !g.player.dead
       && dist(cx, cy, g.player.x, g.player.y) < g.player.radius + def.size * TILE * 0.5) {
       return tr('game.place.playerInWay', 'Character is in the way');
     }
@@ -173,10 +176,80 @@ export class BuildingSystem {
   sellValue(b: Building) {
     const g = this.game;
     const cost = this.costOf(b.def);
+    // Upgrades paid in are refunded at the same rate as the structure itself.
+    const spent = this.upgradeSpent(b);
     return {
-      ore: Math.round(cost.ore * SELL_RATIO * g.perks.sellRefund * (0.5 + b.progress * 0.5)),
-      essence: Math.round(cost.essence * SELL_RATIO * g.perks.sellRefund),
+      ore: Math.round((cost.ore * (0.5 + b.progress * 0.5) + spent.ore) * SELL_RATIO * g.perks.sellRefund),
+      essence: Math.round((cost.essence + spent.essence) * SELL_RATIO * g.perks.sellRefund),
     };
+  }
+
+  /* ---- upgrades (see data/upgrades.ts) ---------------------------------- */
+
+  /** Price of the step to `level` for this structure type, or null past the cap. */
+  private stepCost(def: BuildingDef, level: number) {
+    const f = upgradeCostFraction(level);
+    if (f <= 0) return null;
+    const base = this.costOf(def);
+    return { ore: Math.max(1, Math.round(base.ore * f)), essence: Math.round(base.essence * f) };
+  }
+
+  /**
+   * Cost of `b`'s next upgrade, or null when it can't go further: not a
+   * turret, still under construction, or already at the top level.
+   */
+  upgradeCost(b: Building) {
+    if (!b.isTurret || !b.built || b.level >= MAX_BUILDING_LEVEL) return null;
+    return this.stepCost(b.def, b.level + 1);
+  }
+
+  /** Total paid into `b`'s upgrades so far, at today's prices (for refunds). */
+  private upgradeSpent(b: Building) {
+    const total = { ore: 0, essence: 0 };
+    for (let lv = 2; lv <= b.level; lv++) {
+      const c = this.stepCost(b.def, lv);
+      if (c) { total.ore += c.ore; total.essence += c.essence; }
+    }
+    return total;
+  }
+
+  /**
+   * Buys `b`'s next level. Level 3 needs a `branch`. Returns whether it
+   * happened; on failure the reason is shown as the usual error toast.
+   */
+  upgradeBuilding(b: Building, branch?: UpgradeBranch): boolean {
+    const g = this.game;
+    const cost = this.upgradeCost(b);
+    if (!cost || b.dead) return false;
+    const next = b.level + 1;
+    if (next === MAX_BUILDING_LEVEL && !branch) return false;
+    if (g.ore < cost.ore) {
+      g.presentation.error(tr('game.error.upgradeNeedOre', 'Need {n} ore to upgrade', { n: cost.ore }));
+      return false;
+    }
+    if (g.essence < cost.essence) {
+      g.presentation.error(tr('game.error.upgradeNeedEssence', 'Need {n} essence to upgrade', { n: cost.essence }));
+      return false;
+    }
+    g.ore -= cost.ore;
+    g.essence -= cost.essence;
+    this.applyLevel(b, next, next === MAX_BUILDING_LEVEL ? branch! : null);
+    audio.play('build');
+    g.particles.ring(b.x, b.y, b.radius * 1.8, branch === 'rapid' ? 0xffb347 : 0x7fd9ff, 0.4);
+    g.shake(1.5);
+    return true;
+  }
+
+  /**
+   * Sets a level/branch and grows the hull to match, keeping the damage it
+   * has already taken (the new capacity arrives repaired).
+   */
+  private applyLevel(b: Building, level: number, branch: UpgradeBranch | null) {
+    const missing = b.maxHp - b.hp;
+    b.level = level;
+    b.branch = branch;
+    b.maxHp = Math.round(b.def.hp * this.game.perks.structureHp * b.upgrade.hp);
+    b.hp = clamp(b.maxHp - missing, 1, b.maxHp);
   }
 
   sellBuilding(b: Building) {
@@ -323,7 +396,15 @@ export class BuildingSystem {
       if (b.def.repairRate !== undefined) this.updateRepairBay(b, dt);
       if (b.def.shieldAmount !== undefined) this.updateShieldPylon(b, dt);
       if (b.def.fieldHp !== undefined) this.updateForceField(b, dt);
-      if (b.isTurret) this.updateTurret(b, dt);
+      if (b.isTurret) {
+        // Webbed by the Weaver: silent until it wears off (beams wind down too).
+        if (b.webbed > 0) {
+          b.webbed = Math.max(0, b.webbed - dt);
+          b.beamIntensity = damp(b.beamIntensity, 0, 10, dt);
+        } else {
+          this.updateTurret(b, dt);
+        }
+      }
     }
   }
 
@@ -467,7 +548,7 @@ export class BuildingSystem {
   private updateTurret(b: Building, dt: number) {
     const g = this.game;
     const def = b.def;
-    const range = def.range! * g.perks.turretRange;
+    const range = def.range! * g.perks.turretRange * b.upgrade.range;
 
     // Retarget periodically, or immediately if the current target is gone.
     if (!b.target || b.target.dead || !b.target.targetable || dist2(b.x, b.y, b.target.x, b.target.y) > range * range) {
@@ -492,7 +573,7 @@ export class BuildingSystem {
     b.angle = rotateToward(b.angle, want, turn);
 
     const aligned = Math.abs(((want - b.angle + Math.PI * 3) % TAU) - Math.PI) < 0.16;
-    const rate = def.fireRate! * g.perks.turretFireRate * b.efficiency;
+    const rate = def.fireRate! * g.perks.turretFireRate * b.upgrade.rate * b.efficiency;
 
     if (def.beam) {
       // Continuous beam: damage is applied per second while locked on.
@@ -572,7 +653,7 @@ export class BuildingSystem {
     const muzzleLen = b.radius * 0.9;
     const mx = b.x + Math.cos(b.angle) * muzzleLen;
     const my = b.y + Math.sin(b.angle) * muzzleLen;
-    const dmg = def.damage! * g.perks.turretDamage;
+    const dmg = def.damage! * g.perks.turretDamage * b.upgrade.damage;
     b.recoil = 1;
     // Low-flare guns never reach a full-intensity flash at all, not even on the
     // first round of a burst — that first slam was the remaining glare source.
@@ -671,7 +752,8 @@ export class BuildingSystem {
     const g = this.game;
     const world = g.world;
     const def = b.def;
-    const dps = def.damage! * g.perks.turretDamage * def.fireRate! * b.efficiency;
+    const up = b.upgrade;
+    const dps = def.damage! * g.perks.turretDamage * up.damage * def.fireRate! * up.rate * b.efficiency;
     const dirX = Math.cos(b.angle), dirY = Math.sin(b.angle);
 
     // Truncate the beam at terrain.
@@ -774,15 +856,22 @@ export class BuildingSystem {
   }
 
   /** Places a saved structure without charging for it or playing build FX. */
-  restoreBuilding(def: BuildingDef, tx: number, ty: number, hp: number) {
+  restoreBuilding(
+    def: BuildingDef, tx: number, ty: number, hp: number,
+    level = 1, branch: UpgradeBranch | null = null,
+  ) {
     const g = this.game;
     const world = g.world;
     // Terrain regenerates identically, so a rejection means the snapshot and the
     // code have diverged; skip that structure rather than corrupt the grid.
-    if (this.canPlace(def, tx, ty, false) !== null) return;
+    if (this.canPlace(def, tx, ty, true) !== null) return;
 
     const b = new Building(def, tx, ty, TILE, g.perks.structureHp);
     b.progress = 1;
+    if (b.isTurret && level > 1) {
+      this.applyLevel(b, clamp(Math.round(level), 1, MAX_BUILDING_LEVEL),
+        level >= MAX_BUILDING_LEVEL ? (branch === 'range' ? 'range' : 'rapid') : null);
+    }
     b.hp = clamp(hp, 1, b.maxHp);
     this.buildings.push(b);
     this.buildingById.set(b.id, b);

@@ -20,6 +20,8 @@ import {
 import { applyPerk, basePerks, type Perks } from '../data/perks';
 import { ARMOR_TIERS, type WeaponKind } from '../data/loadout';
 import { TECH_CARDS, type TechCard } from '../data/tech';
+import type { UpgradeBranch } from '../data/upgrades';
+import { applySynergies } from '../data/synergies';
 import {
   Building, Core, Drone, Enemy,
   type PickupKind, Player, Projectile,
@@ -40,6 +42,7 @@ import { PlayerSystem } from './systems/player';
 import { CombatSystem } from './systems/combat';
 import { EnemySystem } from './systems/enemies';
 import { WaveSystem } from './systems/waveFlow';
+import { StrikeSystem } from './systems/strike';
 
 /**
  * Campaign runs end at a scripted boss; endless runs end when the core dies;
@@ -49,7 +52,8 @@ import { WaveSystem } from './systems/waveFlow';
 export type GameMode = 'campaign' | 'endless' | 'skirmish';
 
 export type BuildMode = { kind: BuildingKind } | null;
-export type CursorMode = 'normal' | 'build' | 'sell';
+/** 'strike': aiming the orbital strike (touch) — the next map tap calls it. */
+export type CursorMode = 'normal' | 'build' | 'sell' | 'strike';
 
 export interface Camera {
   x: number;
@@ -193,7 +197,11 @@ export class Game {
     this.combatSystem = new CombatSystem(this);
     this.enemySystem = new EnemySystem(this);
     this.waveSystem = new WaveSystem(this);
+    this.strike = new StrikeSystem(this);
   }
+
+  /** The player's orbital strike: charge, calls in flight. */
+  readonly strike: StrikeSystem;
 
   get projectiles() { return this.combatSystem.projectiles; }
   get enemies() { return this.enemySystem.enemies; }
@@ -281,6 +289,7 @@ export class Game {
         const card = TECH_CARDS.find((c) => c.id === id);
         if (card?.perk) applyPerk(this.perks, card.perk);
       }
+      applySynergies(this.perks, this.techTaken);
       this.unlockedBuildings = new Set([...this.level.unlocked, ...carryOver.unlocked]);
     } else {
       this.techTaken = [];
@@ -339,6 +348,7 @@ export class Game {
     };
 
     this.presentation.reset();
+    this.strike.reset();
     this.cursorMode = 'normal';
     this.buildKind = null;
     // A section that is empty in this sector must not stay selected.
@@ -382,7 +392,6 @@ export class Game {
     this.presentation.advanceTimeScale(rawDt);
 
     const dt = Math.min(0.05, rawDt) * (this.frozen ? 0 : this.presentation.timeScale);
-    this.presentation.elapsed += dt;
 
     this.updateInteraction(input, rawDt);
     this.presentation.updateBanner(rawDt);
@@ -392,6 +401,33 @@ export class Game {
       return;
     }
 
+    // Fast-forward runs the simulation `speed` times per frame at the normal
+    // step, rather than one double-length step: projectiles and collisions
+    // keep their usual resolution, so nothing tunnels at ×2. Input, camera
+    // and the flow field stay once per frame.
+    for (let step = 0; step < this.speed && !this.frozen; step++) this.simulate(dt, input);
+
+    this.presentation.updateCamera(rawDt, input);
+    this.presentation.updateAudioMix(dt);
+    this.flushBuffers();
+
+    this.world.field.rebuild();
+  }
+
+  /**
+   * Game speed: 1, or 2 while fast-forwarding (touch ⏩ button, desktop R).
+   * Meant for the waits — a long build phase, the last stragglers of a wave.
+   */
+  speed = 1;
+
+  toggleSpeed() {
+    this.speed = this.speed === 1 ? 2 : 1;
+    audio.play('uiClick');
+  }
+
+  /** One simulation step of `dt` seconds. */
+  private simulate(dt: number, input: InputSource) {
+    this.presentation.elapsed += dt;
     this.buffers.seconds += dt;
     this.runStats.timeSeconds += dt;
 
@@ -404,6 +440,7 @@ export class Game {
     this.droneSystem.updateDrones(dt);
     this.enemySystem.updateEnemies(dt);
     this.combatSystem.updateProjectiles(dt);
+    this.strike.update(dt);
     this.pickupSystem.updatePickups(dt);
     this.presentation.updateEffects(dt);
     this.coreSystem.updateCore(dt);
@@ -411,11 +448,6 @@ export class Game {
 
     this.particles.update(dt);
     this.presentation.updateDamageNumbers(dt);
-    this.presentation.updateCamera(rawDt, input);
-    this.presentation.updateAudioMix(dt);
-    this.flushBuffers();
-
-    this.world.field.rebuild();
   }
 
   private flushBuffers() {
@@ -492,6 +524,24 @@ export class Game {
 
     // Cycle targeting mode of the hovered turret.
     if (input.pressed('KeyT') && this.hoverBuilding) this.cycleTargeting(this.hoverBuilding);
+
+    if (input.pressed('KeyR')) this.toggleSpeed();
+
+    // Orbital strike: F drops it on the cursor; on touch the strike button
+    // arms 'strike' mode and the next map tap lands it (see TouchInput).
+    if (input.pressed('KeyF') && this.cursorMode === 'normal') {
+      this.strike.call(this.mouseWorldX, this.mouseWorldY);
+    } else if (this.cursorMode === 'strike' && input.mouseClicked(0)) {
+      if (this.strike.call(this.mouseWorldX, this.mouseWorldY)) this.cursorMode = 'normal';
+    }
+
+    // Upgrade the hovered turret: U takes it to level 2; at level 2 the fork
+    // is U = rapid fire, I = long range (spelled out in the hover tooltip).
+    const hb = this.hoverBuilding;
+    if (hb && this.cursorMode === 'normal') {
+      if (input.pressed('KeyU')) this.upgradeBuilding(hb, hb.level === 2 ? 'rapid' : undefined);
+      else if (input.pressed('KeyI') && hb.level === 2) this.upgradeBuilding(hb, 'range');
+    }
 
     // Repair while E held.
     if (input.down('KeyE') && this.hoverBuilding && this.hoverBuilding.hp < this.hoverBuilding.maxHp) {
@@ -572,8 +622,8 @@ export class Game {
    * `checkPlayer` is turned off when replaying a save: the player's restored
    * position is irrelevant to whether a structure they placed earlier is valid.
    */
-  canPlace(def: BuildingDef, tx: number, ty: number, checkPlayer = true): string | null {
-    return this.buildingSystem.canPlace(def, tx, ty, checkPlayer);
+  canPlace(def: BuildingDef, tx: number, ty: number): string | null {
+    return this.buildingSystem.canPlace(def, tx, ty);
   }
 
   costOf(def: BuildingDef) {
@@ -600,6 +650,16 @@ export class Game {
 
   sellValue(b: Building) {
     return this.buildingSystem.sellValue(b);
+  }
+
+  /** Cost of `b`'s next upgrade, or null if it can't upgrade. */
+  upgradeCost(b: Building) {
+    return this.buildingSystem.upgradeCost(b);
+  }
+
+  /** Buys `b`'s next level; level 3 needs a branch. Shared by keys and the touch menu. */
+  upgradeBuilding(b: Building, branch?: UpgradeBranch): boolean {
+    return this.buildingSystem.upgradeBuilding(b, branch);
   }
 
   private repairBuilding(b: Building, dt: number) {
@@ -748,7 +808,7 @@ export class Game {
     e: Enemy,
     amount: number,
     opts: {
-      source: 'turret' | 'player' | 'burn';
+      source: 'turret' | 'player' | 'burn' | 'ability';
       armorPierce?: number;
       building?: Building;
       dirX?: number; dirY?: number;
@@ -992,8 +1052,11 @@ export class Game {
   }
 
   /** Places a saved structure without charging for it or playing build FX. */
-  restoreBuilding(def: BuildingDef, tx: number, ty: number, hp: number) {
-    this.buildingSystem.restoreBuilding(def, tx, ty, hp);
+  restoreBuilding(
+    def: BuildingDef, tx: number, ty: number, hp: number,
+    level?: number, branch?: UpgradeBranch | null,
+  ) {
+    this.buildingSystem.restoreBuilding(def, tx, ty, hp, level, branch);
   }
 
   static loadSnapshot() {
