@@ -1,29 +1,23 @@
 import { audio } from '../core/audio';
 import type { InputSource } from '../core/input';
-import { GHOST_LIFT } from '../core/touch';
 import {
   Rng, clamp, lerp,
 } from '../core/math';
 // Aliased: this file's `t` is almost always a Tile value, not a translation call.
 import { t as tr } from '../core/i18n';
 import { Particles } from '../engine/particles';
-import { SpatialHash } from '../engine/spatial';
 import { FlowField } from '../engine/flowfield';
 import {
-  BUILDINGS, BUILD_ORDER, BUILD_CATEGORIES, CATEGORY_KEY_CODE, HOTKEY_CODES,
-  type BuildCategory, type BuildingDef, type BuildingKind,
+  BUILD_ORDER, type BuildCategory, type BuildingDef, type BuildingKind,
 } from '../data/buildings';
 import { type EnemyDef } from '../data/enemies';
-import {
-  ENDLESS_BOSS_INTERVAL, LEVELS, levelName, levelSubtitle, ngDifficultyMult, type LevelDef,
-} from '../data/levels';
-import { applyPerk, basePerks, type Perks } from '../data/perks';
-import { ARMOR_TIERS, type WeaponKind } from '../data/loadout';
+import { ENDLESS_BOSS_INTERVAL, type LevelDef } from '../data/levels';
+import { basePerks, type Perks } from '../data/perks';
+import type { WeaponKind } from '../data/loadout';
 import { TECH_CARDS, type TechCard } from '../data/tech';
 import type { UpgradeBranch } from '../data/upgrades';
-import { applySynergies } from '../data/synergies';
 import {
-  Building, Core, Drone, Enemy,
+  Building, Drone, Enemy,
   type PickupKind, Player, Projectile,
 } from './entities';
 import { Progress } from './progress';
@@ -43,6 +37,10 @@ import { CombatSystem } from './systems/combat';
 import { EnemySystem } from './systems/enemies';
 import { WaveSystem } from './systems/waveFlow';
 import { StrikeSystem } from './systems/strike';
+import { InteractionSystem } from './systems/interaction';
+import { setupLevel, type CarryOver, type LevelOptions } from './levelSetup';
+import type { RunResult } from './runResult';
+import type { DailyChallenge } from '../data/daily';
 
 /**
  * Campaign runs end at a scripted boss; endless runs end when the core dies;
@@ -72,8 +70,7 @@ export interface Banner {
   color: string;
 }
 
-export const PLAYER_BASE_HP = 160;
-export const CORE_BASE_HP = 2600;
+export { PLAYER_BASE_HP, CORE_BASE_HP } from './levelSetup';
 
 export class Game {
   // --- persistent ---
@@ -198,10 +195,13 @@ export class Game {
     this.enemySystem = new EnemySystem(this);
     this.waveSystem = new WaveSystem(this);
     this.strike = new StrikeSystem(this);
+    this.interaction = new InteractionSystem(this);
   }
 
   /** The player's orbital strike: charge, calls in flight. */
   readonly strike: StrikeSystem;
+  /** Cursor, hotkey and build-ghost handling. */
+  readonly interaction: InteractionSystem;
 
   get projectiles() { return this.combatSystem.projectiles; }
   get enemies() { return this.enemySystem.enemies; }
@@ -246,132 +246,11 @@ export class Game {
    */
   startLevel(
     levelIndex: number | LevelDef,
-    carryOver?: {
-      perks: Perks; tech: string[]; unlocked: BuildingKind[];
-      weaponsOwned: WeaponKind[]; weapon: WeaponKind; armorTier: number;
-    },
+    carryOver?: CarryOver,
     seed?: number,
-    opts: { mode?: GameMode; resuming?: boolean } = {},
+    opts: LevelOptions = {},
   ) {
-    this.mode = opts.mode ?? 'campaign';
-    if (typeof levelIndex === 'number') {
-      this.levelIndex = clamp(levelIndex, 0, LEVELS.length - 1);
-      const base = LEVELS[this.levelIndex];
-      // NG+ only ever applies to a real campaign sector picked by index —
-      // a skirmish map already bakes the chosen difficulty into its own
-      // LevelDef, and endless has its own separate scaling.
-      this.ngTier = this.mode === 'campaign'
-        ? clamp(Math.round(this.progress.data.settings.ngTier ?? 1), 1, 10)
-        : 1;
-      this.level = this.ngTier > 1
-        ? { ...base, difficulty: base.difficulty * ngDifficultyMult(this.ngTier) }
-        : base;
-    } else {
-      this.levelIndex = -1;
-      this.level = levelIndex;
-      this.ngTier = 1;
-    }
-    // The level's own seed is a per-sector salt, so the same run seed still yields
-    // a different map in each sector.
-    this.runSeed = (seed ?? ((Math.random() * 0x100000000) >>> 0)) >>> 0;
-    const mapSeed = (this.runSeed ^ this.level.seed) >>> 0;
-    this.mapSeed = mapSeed;
-    this.rng = new Rng(mapSeed ^ 0xc0ffee);
-    this.world = new World(this.level, mapSeed);
-    this.enemySystem.enemyHash = new SpatialHash(this.world.pxW, this.world.pxH, 72);
-    this.buildingSystem.buildingHash = new SpatialHash(this.world.pxW, this.world.pxH, 128);
-
-    // Perks: achievements always apply; tech carries across levels in a campaign.
-    this.perks = this.progress.computePerks();
-    if (carryOver) {
-      this.techTaken = [...carryOver.tech];
-      for (const id of this.techTaken) {
-        const card = TECH_CARDS.find((c) => c.id === id);
-        if (card?.perk) applyPerk(this.perks, card.perk);
-      }
-      applySynergies(this.perks, this.techTaken);
-      this.unlockedBuildings = new Set([...this.level.unlocked, ...carryOver.unlocked]);
-    } else {
-      this.techTaken = [];
-      this.unlockedBuildings = new Set(this.level.unlocked);
-    }
-
-    this.enemies.length = 0;
-    this.buildings.length = 0;
-    this.buildingById.clear();
-    this.buildingSystem.buildingAt = new Array(this.world.w * this.world.h).fill(null);
-    this.projectiles.length = 0;
-    this.drones.length = 0;
-    this.pickups.length = 0;
-    this.effects.length = 0;
-    this.damageNumbers.length = 0;
-    this.particles.clear();
-
-    this.coreSystem.core = new Core(this.world.coreX, this.world.coreY, Math.round(CORE_BASE_HP * this.perks.coreHp));
-    const armorTier = carryOver?.armorTier ?? 0;
-    const armorHpBonus = ARMOR_TIERS[armorTier]?.hpBonus ?? 0;
-    this.player = new Player(
-      this.world.coreX + TILE * 2.5,
-      this.world.coreY + TILE * 2.5,
-      Math.round(PLAYER_BASE_HP * this.perks.playerMaxHp) + armorHpBonus,
-    );
-    this.player.armorTier = armorTier;
-    if (carryOver) {
-      this.player.weaponsOwned = new Set(carryOver.weaponsOwned);
-      this.player.weapon = carryOver.weapon;
-    }
-
-    this.ore = Math.round(this.level.startOre + this.perks.startOre);
-    this.essence = Math.round(this.level.startEssence + this.perks.startEssence);
-
-    this.director = new WaveDirector(
-      this.level, this.world.spawns.length, mapSeed ^ 0xabcdef, this.mode === 'endless',
-    );
-    this.waveIndex = 0;
-    this.plan = null;
-    this.nextPlan = this.director.plan(0);
-    this.orderCursor = 0;
-    this.spawnedThisWave = 0;
-    this.killedThisWave = 0;
-    this.bossRef = null;
-    this.phase = 'prep';
-    this.prepRemaining = this.level.prepTime;
-    this.waveTimer = 0;
-    this.structuresLostThisWave = 0;
-    this.coreDamageThisWave = 0;
-    this.pendingDraft = null;
-
-    this.runStats = {
-      kills: 0, bossKills: 0, oreMined: 0, essenceCollected: 0,
-      built: 0, damage: 0, structuresLost: 0, wavesCleared: 0,
-      coreDamage: 0, timeSeconds: 0, bestPower: 0, dronesLost: 0, droneOre: 0,
-    };
-
-    this.presentation.reset();
-    this.strike.reset();
-    this.cursorMode = 'normal';
-    this.buildKind = null;
-    // A section that is empty in this sector must not stay selected.
-    this.buildCategory = this.activeCategories[0] ?? 'resources';
-    this.frozen = false;
-
-    // Seed the field with the core as the single goal.
-    this.world.field.setGoals([this.world.field.index(this.world.coreTx, this.world.coreTy)]);
-    this.world.field.rebuild();
-
-    this.setBanner(
-      this.mode === 'endless'
-        ? tr('game.banner.endlessTitle', 'ENDLESS · {name}', { name: levelName(this.level).toUpperCase() })
-        : levelName(this.level).toUpperCase(),
-      this.mode === 'endless'
-        ? tr('game.banner.endlessSubtitle', 'Survive as long as you can')
-        : levelSubtitle(this.level),
-      4.2, this.mode === 'endless' ? '#ffcc55' : '#46d8ff',
-    );
-    audio.startMusic(this.levelIndex * 2);
-    audio.setIntensity(0);
-    // Resuming is not a new attempt; only count fresh deployments.
-    if (!opts.resuming) this.progress.recordRunStat('runs', 1);
+    setupLevel(this, levelIndex, carryOver, seed, opts);
   }
 
   setPhase(p: Phase) {
@@ -393,7 +272,7 @@ export class Game {
 
     const dt = Math.min(0.05, rawDt) * (this.frozen ? 0 : this.presentation.timeScale);
 
-    this.updateInteraction(input, rawDt);
+    this.interaction.update(input, rawDt);
     this.presentation.updateBanner(rawDt);
 
     if (dt <= 0) {
@@ -459,126 +338,6 @@ export class Game {
     if (b.seconds >= 5) { const n = Math.floor(b.seconds); b.seconds -= n; this.progress.bump('playSeconds', n); this.progress.recordRunStat('playSeconds', n); }
   }
 
-  /* ====================================================================== */
-  /* Interaction: build placement, selling, repairing                        */
-  /* ====================================================================== */
-
-  private updateInteraction(input: InputSource, dt: number) {
-    // Cursor → world.
-    const view = this.viewport;
-    this.mouseWorldX = this.camera.x + (input.mouseX - view.w / 2) / this.camera.zoom;
-    this.mouseWorldY = this.camera.y + (input.mouseY - view.h / 2) / this.camera.zoom;
-    if (this.aimOverride) {
-      this.mouseWorldX = this.aimOverride.x;
-      this.mouseWorldY = this.aimOverride.y;
-    }
-
-    if (input.uiCaptured) return;
-
-    // Zoom.
-    if (input.wheel !== 0) {
-      this.camera.zoom = clamp(this.camera.zoom * (input.wheel > 0 ? 0.9 : 1.111), 0.55, 1.9);
-    }
-
-    // Section keys first: they change what the digits mean.
-    for (const cat of BUILD_CATEGORIES) {
-      if (!input.pressed(CATEGORY_KEY_CODE[cat])) continue;
-      if (this.categoryBuildings(cat).length === 0) break;
-      this.buildCategory = cat;
-      // Switching sections cancels a pending placement rather than silently
-      // leaving a ghost from the section you just left.
-      this.buildKind = null;
-      this.cursorMode = 'normal';
-      audio.play('uiClick');
-      break;
-    }
-
-    // Digits select a slot inside the active section.
-    for (const kind of this.categoryBuildings(this.buildCategory)) {
-      const def = BUILDINGS[kind];
-      const code = HOTKEY_CODES[def.hotkey];
-      if (!code || !input.pressed(code)) continue;
-      this.buildKind = this.buildKind === kind ? null : kind;
-      this.cursorMode = this.buildKind ? 'build' : 'normal';
-      audio.play('uiClick');
-      break;
-    }
-
-    if (input.pressed('KeyQ')) {
-      this.cursorMode = this.cursorMode === 'sell' ? 'normal' : 'sell';
-      this.buildKind = null;
-      audio.play('uiClick');
-    }
-
-    if (input.pressed('Escape') && this.cursorMode !== 'normal') {
-      this.cursorMode = 'normal';
-      this.buildKind = null;
-      audio.play('uiBack');
-    }
-
-    // Hover resolution.
-    const htx = Math.floor(this.mouseWorldX / TILE);
-    const hty = Math.floor(this.mouseWorldY / TILE);
-    this.hoverBuilding = this.buildingAtTile(htx, hty);
-    this.hoverNode = this.world.nodeAtTile(htx, hty) ?? null;
-
-    // Cycle targeting mode of the hovered turret.
-    if (input.pressed('KeyT') && this.hoverBuilding) this.cycleTargeting(this.hoverBuilding);
-
-    if (input.pressed('KeyR')) this.toggleSpeed();
-
-    // Orbital strike: F drops it on the cursor; on touch the strike button
-    // arms 'strike' mode and the next map tap lands it (see TouchInput).
-    if (input.pressed('KeyF') && this.cursorMode === 'normal') {
-      this.strike.call(this.mouseWorldX, this.mouseWorldY);
-    } else if (this.cursorMode === 'strike' && input.mouseClicked(0)) {
-      if (this.strike.call(this.mouseWorldX, this.mouseWorldY)) this.cursorMode = 'normal';
-    }
-
-    // Upgrade the hovered turret: U takes it to level 2; at level 2 the fork
-    // is U = rapid fire, I = long range (spelled out in the hover tooltip).
-    const hb = this.hoverBuilding;
-    if (hb && this.cursorMode === 'normal') {
-      if (input.pressed('KeyU')) this.upgradeBuilding(hb, hb.level === 2 ? 'rapid' : undefined);
-      else if (input.pressed('KeyI') && hb.level === 2) this.upgradeBuilding(hb, 'range');
-    }
-
-    // Repair while E held.
-    if (input.down('KeyE') && this.hoverBuilding && this.hoverBuilding.hp < this.hoverBuilding.maxHp) {
-      this.repairBuilding(this.hoverBuilding, dt);
-    }
-
-    if (this.cursorMode === 'build' && this.buildKind) {
-      const def = BUILDINGS[this.buildKind];
-      // On touch, the placement point sits right under the thumb doing the
-      // pointing — lift it clear so the ghost (and what's behind it) is
-      // actually visible. Desktop has a real cursor, so it needs none of this.
-      // The lift is in screen px (≈ a fingertip), so it holds at any zoom.
-      const pty = this.touchUi ? Math.floor((this.mouseWorldY - GHOST_LIFT / this.camera.zoom) / TILE) : hty;
-      // Centre the footprint on the cursor for multi-tile structures.
-      const off = Math.floor((def.size - 1) / 2);
-      this.buildTx = htx - off;
-      this.buildTy = pty - off;
-      this.buildValid = this.canPlace(def, this.buildTx, this.buildTy) === null;
-
-      if (input.mouseDown(0)) {
-        const reason = this.canPlace(def, this.buildTx, this.buildTy);
-        if (reason === null) this.place(def, this.buildTx, this.buildTy);
-        else if (input.mouseClicked(0)) this.presentation.error(reason);
-      }
-      if (input.mouseClicked(2)) {
-        this.cursorMode = 'normal';
-        this.buildKind = null;
-        audio.play('uiBack');
-      }
-    } else if (this.cursorMode === 'sell') {
-      if (input.mouseClicked(0) && this.hoverBuilding) this.sellBuilding(this.hoverBuilding);
-      if (input.mouseClicked(2)) { this.cursorMode = 'normal'; audio.play('uiBack'); }
-    }
-
-    // Skip the build phase for a bonus.
-    if (input.pressed('Space')) this.skipBuildPhase();
-  }
 
   /**
    * Ends the current build window early for bonus ore. Public because the touch
@@ -630,7 +389,8 @@ export class Game {
     return this.buildingSystem.costOf(def);
   }
 
-  private place(def: BuildingDef, tx: number, ty: number) {
+  /** Charges for and places a structure. Public so headless tests can build without a cursor. */
+  place(def: BuildingDef, tx: number, ty: number) {
     this.buildingSystem.place(def, tx, ty);
   }
 
@@ -662,10 +422,6 @@ export class Game {
     return this.buildingSystem.upgradeBuilding(b, branch);
   }
 
-  private repairBuilding(b: Building, dt: number) {
-    this.buildingSystem.repairBuilding(b, dt);
-  }
-
   removeBuilding(b: Building, destroyed: boolean) {
     this.buildingSystem.removeBuilding(b, destroyed);
   }
@@ -686,6 +442,12 @@ export class Game {
     return this.waveSystem.describeWave(plan);
   }
 
+  /** Active mutators (endless only); see data/mutators.ts. */
+  mutators: string[] = [];
+  /** The daily challenge being played, if any. */
+  daily: DailyChallenge | null = null;
+  /** Score, XP and record placement of the run that just ended; null while it is live. */
+  result: RunResult | null = null;
   /** Relics paid out by the sector just cleared; shown on the victory screen. */
   lastRelicAward = 0;
   /** Endless outcome, filled in on death: was this a new personal best? */
@@ -925,7 +687,7 @@ export class Game {
    * snapshot anyway — bailing out here just avoids clobbering a genuine
    * campaign/endless snapshot the player might still have with a useless one.
    */
-  get canSaveRun() { return this.inBuildPhase && this.mode !== 'skirmish'; }
+  get canSaveRun() { return this.inBuildPhase && this.mode !== 'skirmish' && !this.daily; }
 
   /**
    * How stacked this run's tech is, 0-4 — the single source of truth the

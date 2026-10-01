@@ -6,6 +6,7 @@ import { applyPerk } from '../data/perks';
 import { ARMOR_TIERS, type WeaponKind } from '../data/loadout';
 import { TECH_CARDS } from '../data/tech';
 import { applySynergies } from '../data/synergies';
+import { applyMutators } from '../data/mutators';
 import { TILE } from './world';
 import { WaveDirector } from './waves';
 import { RUN_SNAPSHOT_VERSION, type RunSnapshot } from '../core/save';
@@ -48,6 +49,7 @@ export function buildSnapshot(game: Game): RunSnapshot {
       ...(b.branch ? { br: b.branch } : {}),
     })),
     strike: Math.round(game.strike.charge * 10) / 10,
+    ...(game.mutators.length ? { mut: [...game.mutators] } : {}),
     nodes: game.world.nodes.map((n) => Math.round(n.amount)),
     stats: {
       kills: game.runStats.kills,
@@ -81,6 +83,7 @@ export function applySnapshot(game: Game, snap: RunSnapshot): boolean {
   game.startLevel(snap.levelIndex, undefined, snap.seed, {
     mode: snap.mode,
     resuming: true,
+    mutators: snap.mut,
   });
 
   game.techTaken = [...snap.tech];
@@ -88,6 +91,7 @@ export function applySnapshot(game: Game, snap: RunSnapshot): boolean {
   // Perks are derived, never stored: the profile may have gained achievements
   // or shop ranks since the save, and the run should benefit from them.
   game.perks = game.progress.computePerks();
+  applyMutators(game.perks, game.mutators);
   for (const id of game.techTaken) {
     const card = TECH_CARDS.find((c) => c.id === id);
     if (card?.perk) applyPerk(game.perks, card.perk);

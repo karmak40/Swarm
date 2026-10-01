@@ -3,6 +3,7 @@ import { t as tr } from '../../core/i18n';
 import { clamp, damp, dist2, rand } from '../../core/math';
 import type { Core, Enemy } from '../entities';
 import type { Game } from '../game';
+import { finalizeRun } from '../runResult';
 
 /** The reactor: its passive regen/shield tick, its weak built-in gun, damage, and the loss condition. */
 export class CoreSystem {
@@ -97,10 +98,13 @@ export class CoreSystem {
     const g = this.game;
     const c = this.core;
     if (g.mode === 'endless') {
-      // Endless has no victory condition, so the score is banked on death.
-      g.endlessRecord = g.progress.recordEndlessResult(g.levelIndex, g.waveIndex);
-      g.lastRelicAward = g.progress.awardEndlessRelics(g.waveIndex);
+      // Endless has no victory condition, so the score is banked on death. A
+      // daily is a special endless run: it has its own board, and must not
+      // overwrite the sector's personal-best wave.
+      if (!g.daily) g.endlessRecord = g.progress.recordEndlessResult(g.levelIndex, g.waveIndex);
+      g.lastRelicAward = g.progress.awardEndlessRelics(g.waveIndex, g.mutators);
     }
+    g.result = finalizeRun(g, false);
     g.setPhase('lost');
     g.frozen = true;
     g.discardSavedRun();

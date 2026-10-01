@@ -1,7 +1,13 @@
 import { ACHIEVEMENTS, type AchievementDef, type StatEvent } from '../data/achievements';
 import { applyPerk, basePerks, type Perks } from '../data/perks';
 import { RELIC_UPGRADES, UPGRADES_BY_ID, upgradeCost, type RelicUpgrade } from '../data/relicUpgrades';
-import { loadSave, saveGame, saveNow, type SaveData } from '../core/save';
+import { rankFromXp, rankPerks, rankRelics, type RankStatus } from '../data/ranks';
+import { MAX_MUTATORS, MUTATORS_BY_ID, heatMult, validMutators } from '../data/mutators';
+import { daysBetween } from '../data/daily';
+import {
+  BOARD_SIZE, DAILY_HISTORY, loadSave, saveGame, saveNow,
+  type BoardId, type RunRecord, type SaveData,
+} from '../core/save';
 
 export interface UnlockNotice {
   def: AchievementDef;
@@ -47,7 +53,109 @@ export class Progress {
       const rank = this.rankOf(u.id);
       for (let i = 0; i < rank; i++) applyPerk(p, u.perRank);
     }
+    for (const d of rankPerks(this.rankStatus.rank)) applyPerk(p, d);
     return p;
+  }
+
+  /* ---- commander rank -------------------------------------------------- */
+
+  get xp() { return this.data.xp; }
+
+  get rankStatus(): RankStatus { return rankFromXp(this.data.xp); }
+
+  get rank() { return this.rankStatus.rank; }
+
+  /**
+   * Banks commander XP. Each rank crossed pays its relic bounty and folds the
+   * rank's perk into the profile, so the reward is live for the very next run.
+   */
+  awardXp(xp: number) {
+    const before = this.rank;
+    const gained = Math.max(0, Math.round(xp));
+    this.data.xp += gained;
+    const after = this.rank;
+    let relics = 0;
+    for (let r = before + 1; r <= after; r++) relics += rankRelics(r);
+    if (relics > 0) {
+      this.data.relics += relics;
+      this.data.relicsEarned += relics;
+    }
+    if (after !== before) this.perks = this.computePerks();
+    saveNow(this.data);
+    return { gained, before, after, relics };
+  }
+
+  /* ---- mutator selection ----------------------------------------------- */
+
+  /** Mutators the player has both unlocked and left switched on for free endless runs. */
+  get selectedMutators(): string[] {
+    return validMutators(this.data.mutators).filter((id) => this.rank >= (MUTATORS_BY_ID.get(id)?.unlockRank ?? 99));
+  }
+
+  /** Flips one mutator. Returns false if it is locked or the stack is already full. */
+  toggleMutator(id: string): boolean {
+    const m = MUTATORS_BY_ID.get(id);
+    if (!m || this.rank < m.unlockRank) return false;
+    const cur = this.selectedMutators;
+    const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
+    if (next.length > MAX_MUTATORS) return false;
+    this.data.mutators = next;
+    saveNow(this.data);
+    return true;
+  }
+
+  /* ---- records boards -------------------------------------------------- */
+
+  board(id: BoardId): readonly RunRecord[] {
+    return this.data.records[id];
+  }
+
+  /** Files a run on a board. Returns its 1-based place, or null if it missed the top. */
+  submitRecord(id: BoardId, rec: RunRecord): number | null {
+    const rows = this.data.records[id];
+    rows.push(rec);
+    // Stable sort: on a tie the older run keeps the higher place.
+    rows.sort((a, b) => b.score - a.score);
+    const place = rows.indexOf(rec) + 1;
+    if (rows.length > BOARD_SIZE) rows.length = BOARD_SIZE;
+    saveNow(this.data);
+    return place <= BOARD_SIZE ? place : null;
+  }
+
+  /* ---- daily challenge ------------------------------------------------- */
+
+  dailyBest(key: string) {
+    return this.data.daily.days[key] ?? 0;
+  }
+
+  /** True once a run has been finished on this date. */
+  dailyDone(key: string) {
+    return key in this.data.daily.days;
+  }
+
+  /**
+   * Books a finished daily run: streak, per-day best and, on the first run of
+   * the day, a relic bounty that grows with the streak.
+   */
+  recordDailyRun(key: string, score: number) {
+    const d = this.data.daily;
+    const first = d.lastKey !== key;
+    if (first) {
+      d.streak = d.lastKey && daysBetween(d.lastKey, key) === 1 ? d.streak + 1 : 1;
+      d.bestStreak = Math.max(d.bestStreak, d.streak);
+      d.lastKey = key;
+    }
+    const newBest = score > (d.days[key] ?? -1);
+    if (newBest) d.days[key] = score;
+    const keys = Object.keys(d.days).sort();
+    for (const old of keys.slice(0, Math.max(0, keys.length - DAILY_HISTORY))) delete d.days[old];
+    const relics = first ? 2 + Math.min(d.streak, 7) : 0;
+    if (relics > 0) {
+      this.data.relics += relics;
+      this.data.relicsEarned += relics;
+    }
+    saveNow(this.data);
+    return { first, newBest, streak: d.streak, relics };
   }
 
   /* ---- relic economy --------------------------------------------------- */
@@ -206,8 +314,8 @@ export class Progress {
    * Endless payout. Scales with depth so a deep run is worth more than several
    * shallow ones, which is what stops it being a mindless farm.
    */
-  awardEndlessRelics(waves: number) {
-    const n = Math.floor(waves / 3) + Math.floor(waves / 10) * 2;
+  awardEndlessRelics(waves: number, mutators: readonly string[] = []) {
+    const n = Math.floor((Math.floor(waves / 3) + Math.floor(waves / 10) * 2) * heatMult(mutators));
     if (n > 0) this.awardRelics(n);
     return n;
   }

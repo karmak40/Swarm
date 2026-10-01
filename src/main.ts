@@ -5,6 +5,7 @@ import { saveNow, clearRun } from './core/save';
 import { LEVELS, type LevelDef } from './data/levels';
 import { achievementName, achievementDesc } from './data/achievements';
 import { levelName } from './data/levels';
+import { dailyChallenge, dailyKey, type DailyChallenge } from './data/daily';
 import { ENEMIES } from './data/enemies';
 import type { TechCard } from './data/tech';
 import type { BuildingKind } from './data/buildings';
@@ -134,12 +135,23 @@ let runActive = false;
 
 const screens = new Screens(uiRoot, {
   onStartLevel: (index, fresh) => beginLevel(index, fresh),
-  onStartEndless: (index) => beginLevel(index, true, 'endless'),
+  onStartEndless: (index, mutators) => beginLevel(index, true, 'endless', { mutators }),
+  onStartDaily: () => {
+    const dc = dailyChallenge(dailyKey());
+    beginLevel(dc.levelIndex, true, 'endless', { daily: dc, seed: dc.seed });
+  },
   onStartSkirmish: (level) => beginLevel(level, true, 'skirmish'),
   onResumeRun: () => resumeRun(),
   onSaveAndQuit: () => saveAndQuit(),
   onResume: () => { state = 'playing'; game.frozen = false; },
-  onRestart: () => beginLevel(game.mode === 'skirmish' ? game.level : game.levelIndex, true, game.mode),
+  onRestart: () => {
+    // A daily replays the same map; a mutated endless run keeps its mutators.
+    const daily = game.daily;
+    beginLevel(game.mode === 'skirmish' ? game.level : game.levelIndex, true, game.mode, {
+      mutators: game.mutators,
+      ...(daily ? { daily, seed: daily.seed } : {}),
+    });
+  },
   onQuitToTitle: () => abandonToTitle(),
   onPickTech: (card: TechCard) => {
     game.takeTech(card);
@@ -238,13 +250,18 @@ function saveAndQuit() {
   screens.showTitle(game.progress, resumeInfo());
 }
 
-function beginLevel(index: number | LevelDef, fresh: boolean, mode: GameMode = 'campaign') {
+function beginLevel(
+  index: number | LevelDef,
+  fresh: boolean,
+  mode: GameMode = 'campaign',
+  extra: { mutators?: readonly string[]; daily?: DailyChallenge; seed?: number } = {},
+) {
   audio.unlock();
   applySettings();
   // Starting anything new invalidates a stored run.
   clearRun();
   const carry = !fresh && runActive ? game.carryOver() : undefined;
-  game.startLevel(index, carry, undefined, { mode });
+  game.startLevel(index, carry, extra.seed, { mode, mutators: extra.mutators, daily: extra.daily });
   applyControlScheme();
   game.setViewport(renderer.width, renderer.height);
   runActive = true;
@@ -580,7 +597,7 @@ function handleTouch() {
         audio.play('uiClick');
         break;
       case 'strike':
-        // Arms aiming; the next map tap lands it (Game.updateInteraction).
+        // Arms aiming; the next map tap lands it (InteractionSystem.update).
         // Pressed again while aiming, it backs out.
         if (game.cursorMode === 'strike') {
           game.cursorMode = 'normal';

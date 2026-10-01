@@ -19,6 +19,29 @@ Proprietary, unreleased. See [LICENSE](LICENSE) — all rights reserved.
 | Desktop | Electron, packaged with `electron-builder` (Windows/macOS/Linux) | active — primary release target (Steam) |
 | Mobile | Capacitor (Android/iOS) | in progress — portrait touch controls reworked; needs on-device testing before release |
 
+### Replayability
+
+Beyond the campaign, everything runs offline and lives in the save file:
+
+- **Score** — waves survived × 1000 + kills, plus a speed bonus on a win, scaled by
+  heat (`data/scoring.ts`). Depth always beats farming.
+- **Mutators** — opt-in handicaps for Endless (Swarm Surge, Thin Seams, Frail Core, ...).
+  Each carries *heat* that multiplies score, XP and relic payout (`data/mutators.ts`).
+  They funnel through `Perks` and the level's difficulty, so the simulation never
+  special-cases them. Unlocked by commander rank.
+- **Daily challenge** — one shared endless run per UTC day. Sector, map seed and two
+  mutators derive from the date alone, so every player fights the same map with no
+  server (`data/daily.ts`). First run of the day pays a relic bounty that grows with
+  the streak; the run is not resumable.
+- **Records** — top 10 runs per board (Endless / Daily / Campaign / Custom), kept in the
+  save (`core/save.ts`, `game/runResult.ts`).
+- **Commander rank** — XP from every run, win or lose. Each rank adds a small permanent
+  perk, a relic bounty and sometimes a mutator unlock (`data/ranks.ts`); it complements
+  the Armoury, which is spent on chosen upgrades.
+
+A global leaderboard would need a backend or Steamworks; the local boards store enough
+(score, seed, date) to submit from later.
+
 ### Touch controls
 
 Phones play in portrait. Aiming is automatic, so the right thumb only makes
@@ -88,11 +111,12 @@ the fast regression net; the browser is for feel, not correctness.
 src/
   core/     input, audio, save/load, i18n, platform detection
   engine/   generic bits with no game knowledge — particles, flow-field pathing, spatial hash
-  game/     the simulation itself (Game, entities, waves, save snapshots)
+  game/     the simulation itself (Game facade, entities, waves, level setup, save snapshots)
+    systems/  one class per concern (buildings, combat, enemies, interaction, strike, ...)
   render/   canvas drawing — world, HUD, touch HUD, touch coach
-  ui/       DOM screens (menus, briefing, settings) layered over the canvas
+  ui/       DOM screens layered over the canvas; screens.ts is the facade, panels/ holds one file per screen group
   data/     content definitions — buildings, enemies, levels, tech, achievements
-  locales/  en (inline fallback in source) + de/es/fr/ru translation tables
+  locales/  en (inline fallback in source) + de/es/fr/pl/ru translation tables
   dev/      the smoke test harness
 electron/   Electron main process + preload bridge
 android/    Capacitor Android project (generated; do not hand-edit generated files)

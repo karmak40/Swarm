@@ -9,6 +9,7 @@ import { RARITY_WEIGHT, TECH_CARDS, techName, techDesc, type TechCard } from '..
 import { SYNERGIES, synergyCounts, synergyTitle, tierBonusText, tiersReached } from '../../data/synergies';
 import { TILE } from '../world';
 import type { WavePlan } from '../waves';
+import { finalizeRun } from '../runResult';
 import { CORE_BASE_HP, PLAYER_BASE_HP, type Game } from '../game';
 
 /**
@@ -229,6 +230,7 @@ export class WaveSystem {
       g.progress.bump('flawlessLevel');
       g.progress.recordRunStat('noLossVictories', 1);
     }
+    g.result = finalizeRun(g, true);
     // The run is over; nothing left to resume.
     g.discardSavedRun();
     audio.play('victory');

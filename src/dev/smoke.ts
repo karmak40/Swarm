@@ -69,7 +69,16 @@ import { TECH_CARDS } from '../data/tech';
 import { Game } from '../game/game';
 import { TILE } from '../game/world';
 import type { Input } from '../core/input';
-import { saveNow, loadSave } from '../core/save';
+import { saveNow, loadSave, BOARD_SIZE } from '../core/save';
+import { runScore, runXp } from '../data/scoring';
+import { rankFromXp, xpForRank, MAX_RANK, RANKS } from '../data/ranks';
+import { validMutators, totalHeat, MUTATORS } from '../data/mutators';
+import { ru } from '../locales/ru';
+import { de } from '../locales/de';
+import { es } from '../locales/es';
+import { fr } from '../locales/fr';
+import { pl } from '../locales/pl';
+import { dailyChallenge, dailyKey, daysBetween } from '../data/daily';
 
 const DT = 1 / 60;
 
@@ -1481,6 +1490,165 @@ function testEndlessMode() {
   const camp = new Game();
   camp.startLevel(0, undefined, FIXED_SEED);
   check('campaign runs are not endless', !camp.endless);
+}
+
+function testMetaProgression() {
+  console.log('\n▸ meta-progression: score, rank, mutators, daily, records');
+  const KEY = 'swarm.save.v1';
+  const prevSave = store.get(KEY);
+  store.delete(KEY);
+
+  // --- score is depth-first and heat-scaled ---
+  const base = { waves: 10, kills: 200, seconds: 900, won: false, mutators: [] as string[] };
+  check('score is waves x1000 plus kills', runScore(base) === 10_200, String(runScore(base)));
+  check('a deeper run always outscores a bloodier shallow one',
+    runScore({ ...base, waves: 11, kills: 0 }) > runScore({ ...base, waves: 10, kills: 900 }));
+  check('winning adds a speed bonus',
+    runScore({ ...base, won: true }) > runScore(base) && runScore({ ...base, won: true, seconds: 300 }) > runScore({ ...base, won: true }));
+  check('a loss gets no speed bonus', runScore({ ...base, seconds: 1 }) === runScore(base));
+  check('heat multiplies the score', runScore({ ...base, mutators: ['surge'] }) === Math.round(10_200 * 1.3),
+    String(runScore({ ...base, mutators: ['surge'] })));
+  check('heat multiplies XP',
+    runXp({ ...base, daily: false, mutators: ['surge'] }) > runXp({ ...base, daily: false }));
+  check('a daily pays bonus XP', runXp({ ...base, daily: true }) > runXp({ ...base, daily: false }));
+
+  // --- rank curve ---
+  check('rank 1 needs no XP', rankFromXp(0).rank === 1);
+  let prev = -1, monotone = true;
+  for (let r = 1; r <= MAX_RANK; r++) { if (xpForRank(r) <= prev) monotone = false; prev = xpForRank(r); }
+  check('XP thresholds strictly increase', monotone);
+  check('rank is exactly reached at its threshold', rankFromXp(xpForRank(5)).rank === 5 && rankFromXp(xpForRank(5) - 1).rank === 4);
+  check('rank caps at the maximum', rankFromXp(1e9).rank === MAX_RANK && rankFromXp(1e9).progress === 1);
+  check('every rank above 1 has a perk', RANKS.filter((r) => r.rank > 1).every((r) => r.perk));
+
+  // --- mutators ---
+  check('unknown and duplicate mutators are dropped',
+    validMutators(['surge', 'nope', 'surge']).join() === 'surge');
+  check('heat is the sum of mutator heat', totalHeat(['surge', 'glass']) === 4);
+  const plain = new Game();
+  plain.startLevel(0, undefined, FIXED_SEED, { mode: 'endless' });
+  const hard = new Game();
+  hard.startLevel(0, undefined, FIXED_SEED, { mode: 'endless', mutators: ['surge', 'thin_seams', 'glass'] });
+  check('mutators are recorded on the run', hard.mutators.length === 3);
+  check('Swarm Surge raises enemy difficulty', hard.level.difficulty > plain.level.difficulty * 1.2,
+    `${plain.level.difficulty} vs ${hard.level.difficulty}`);
+  check('Thin Seams cuts ore yield', hard.perks.oreYield < plain.perks.oreYield);
+  check('Glass Frame cuts player health', hard.player.maxHp < plain.player.maxHp);
+  const campaign = new Game();
+  campaign.startLevel(0, undefined, FIXED_SEED, { mutators: ['surge'] });
+  check('campaign ignores mutators', campaign.mutators.length === 0 && campaign.level.difficulty === LEVELS[0].difficulty);
+
+  // --- daily challenge ---
+  const d1 = dailyChallenge('2026-03-14');
+  const d1b = dailyChallenge('2026-03-14');
+  check('a daily is fully determined by its date',
+    d1.seed === d1b.seed && d1.levelIndex === d1b.levelIndex && d1.mutators.join() === d1b.mutators.join());
+  check('a daily stacks two distinct mutators', d1.mutators.length === 2 && d1.mutators[0] !== d1.mutators[1]);
+  let variety = new Set<string>();
+  for (let day = 1; day <= 30; day++) variety.add(dailyChallenge(`2026-04-${String(day).padStart(2, '0')}`).mutators.join());
+  check('different days give different challenges', variety.size > 10, String(variety.size));
+  check('daily sectors stay in range', Array.from({ length: 60 }, (_, i) => dailyChallenge(`2026-05-${i}`).levelIndex)
+    .every((i) => i >= 0 && i < LEVELS.length));
+  check('daysBetween counts whole days', daysBetween('2026-02-28', '2026-03-01') === 1 && daysBetween('2026-03-01', '2026-03-01') === 0);
+  check('dailyKey is the UTC date', dailyKey(new Date('2026-03-14T23:59:59Z')) === '2026-03-14');
+  const dSame = new Game();
+  dSame.startLevel(d1.levelIndex, undefined, d1.seed, { mode: 'endless', daily: d1 });
+  const dSame2 = new Game();
+  dSame2.startLevel(d1.levelIndex, undefined, d1.seed, { mode: 'endless', daily: d1 });
+  check('a daily map is identical for every player',
+    dSame.world.coreX === dSame2.world.coreX && dSame.world.nodes.length === dSame2.world.nodes.length
+    && dSame.mapSeed === dSame2.mapSeed);
+  check('a daily brings its own mutators', dSame.mutators.join() === d1.mutators.join());
+  check('a daily cannot be saved mid-run', !dSame.canSaveRun);
+
+  // --- finishing a daily: board, streak, XP ---
+  const input = idleInput();
+  dSame.frozen = false;
+  dSame.damageCore(dSame.core.maxHp * 5);
+  dSame.update(DT, input);
+  const res = dSame.result;
+  check('a lost daily produces a result', dSame.phase === 'lost' && res !== null);
+  check('the daily goes on the daily board', res?.board === 'daily' && res.place === 1);
+  check('a daily does not touch the endless personal best', dSame.endlessRecord === null
+    && dSame.progress.endlessBest(d1.levelIndex) === 0);
+  check('first daily of the day starts a streak', res?.daily?.first === true && res.daily.streak === 1);
+  check('first daily pays a bounty', (res?.daily?.relics ?? 0) > 0);
+  check('the run paid XP', (res?.xp.gained ?? 0) > 0 && dSame.progress.xp === res?.xp.gained);
+  check('the daily best is remembered', dSame.progress.dailyDone(d1.key) && dSame.progress.dailyBest(d1.key) === res?.score);
+
+  // Second run the same day: no second bounty, no streak change.
+  const second = new Game();
+  second.startLevel(d1.levelIndex, undefined, d1.seed, { mode: 'endless', daily: d1 });
+  second.frozen = false;
+  second.damageCore(second.core.maxHp * 5);
+  second.update(DT, input);
+  check('a second run the same day pays no bounty', second.result?.daily?.first === false && second.result.daily.relics === 0);
+  check('both runs are on the board', second.progress.board('daily').length === 2);
+
+  // Streak logic straight against Progress.
+  const p = second.progress;
+  p.recordDailyRun('2026-03-15', 100);
+  check('consecutive days extend the streak', p.data.daily.streak === 2);
+  p.recordDailyRun('2026-03-20', 100);
+  check('a gap resets the streak but keeps the best', p.data.daily.streak === 1 && p.data.daily.bestStreak === 2);
+
+  // --- boards ---
+  const rec = (score: number) => ({ score, waves: 1, kills: 1, seconds: 1, level: 0, heat: 0, date: 0, seed: 0 });
+  for (let i = 1; i <= 15; i++) p.submitRecord('endless', rec(i * 100));
+  check('a board keeps only its top 10', p.board('endless').length === BOARD_SIZE);
+  check('a board is sorted best first', p.board('endless')[0].score === 1500 && p.board('endless')[9].score === 600);
+  check('a run below the cut reports no place', p.submitRecord('endless', rec(10)) === null);
+  check('a run above the cut reports its place', p.submitRecord('endless', rec(1550)) === 1);
+
+  // --- rank-ups pay out and persist ---
+  const relicsBefore = p.relics;
+  const up = p.awardXp(xpForRank(4));
+  check('big XP crosses several ranks at once', up.after >= 4 && up.before < up.after);
+  check('rank-ups pay relic bounties', up.relics > 0 && p.relics === relicsBefore + up.relics);
+  check('ranks add permanent perks', p.computePerks().startOre > 0 || p.computePerks().miningSpeed > 1);
+  check('mutators unlock by rank', !p.toggleMutator('brownout') && p.toggleMutator('surge'));
+  check('a chosen mutator is remembered', p.selectedMutators.join() === 'surge');
+  check('mutators can be switched off again', p.toggleMutator('surge') && p.selectedMutators.length === 0);
+
+  const reloaded = new Game();
+  check('XP survives a reload', reloaded.progress.xp === p.xp && reloaded.progress.rank === p.rank);
+  check('records survive a reload', reloaded.progress.board('endless').length === BOARD_SIZE
+    && reloaded.progress.board('daily').length === 2);
+  check('daily history survives a reload', reloaded.progress.data.daily.bestStreak === 2);
+
+  // A corrupt save must not break the boards.
+  store.set(KEY, JSON.stringify({ version: 3, xp: 'lots', records: { endless: [null, { score: 'x' }, rec(5)], daily: 7 } }));
+  const bad = loadSave();
+  check('a malformed save loads with clean defaults',
+    bad.xp === 0 && bad.records.endless.length === 1 && bad.records.daily.length === 0 && bad.daily.streak === 0);
+
+  // --- mutated endless snapshot round-trips ---
+  store.delete(KEY);
+  const snapGame = new Game();
+  snapGame.startLevel(0, undefined, FIXED_SEED, { mode: 'endless', mutators: ['brittle'] });
+  check('a mutated endless run can be saved', snapGame.canSaveRun);
+  const snap = snapGame.snapshot();
+  check('the snapshot carries its mutators', snap.mut?.join() === 'brittle');
+  const resumed = new Game();
+  check('a mutated run resumes', resumed.resume(snap));
+  check('resume restores the mutators and their effects',
+    resumed.mutators.join() === 'brittle' && resumed.perks.structureHp < 1);
+
+  if (prevSave === undefined) store.delete(KEY); else store.set(KEY, prevSave);
+}
+
+function testLocaleParity() {
+  console.log('\n▸ locale parity');
+  const sets = { ru: Object.keys(ru), de: Object.keys(de), es: Object.keys(es), fr: Object.keys(fr), pl: Object.keys(pl) };
+  const union = new Set(Object.values(sets).flat());
+  for (const [code, keys] of Object.entries(sets)) {
+    const have = new Set(keys);
+    const missing = [...union].filter((k) => !have.has(k));
+    check(`${code} has every key the other locales have`, missing.length === 0, missing.slice(0, 5).join(', '));
+  }
+  const ruKeys = new Set(sets.ru);
+  check('every mutator is translated', MUTATORS.every((m) => ruKeys.has(`mutator.${m.id}.name`) && ruKeys.has(`mutator.${m.id}.desc`)));
+  check('every commander rank is translated', RANKS.every((r) => ruKeys.has(`rank.title.${r.rank}`)));
 }
 
 function testBestiary() {
@@ -2990,6 +3158,8 @@ testDroneBay();
 testDroneVulnerability();
 testDroneSnapshot();
 testEndlessMode();
+testMetaProgression();
+testLocaleParity();
 testRunSnapshot();
 testTurretUpgrades();
 testOrbitalStrike();

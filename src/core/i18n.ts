@@ -18,8 +18,9 @@ import { ru } from '../locales/ru';
 import { de } from '../locales/de';
 import { es } from '../locales/es';
 import { fr } from '../locales/fr';
+import { pl } from '../locales/pl';
 
-export type LocaleCode = 'en' | 'ru' | 'de' | 'es' | 'fr';
+export type LocaleCode = 'en' | 'ru' | 'de' | 'es' | 'fr' | 'pl';
 
 export interface LocaleInfo {
   code: LocaleCode;
@@ -35,6 +36,7 @@ const DICTS: Record<LocaleCode, Dict> = {
   de,
   es,
   fr,
+  pl,
 };
 
 export const LOCALES: LocaleInfo[] = [
@@ -42,6 +44,7 @@ export const LOCALES: LocaleInfo[] = [
   { code: 'de', label: 'Deutsch' },
   { code: 'es', label: 'Español' },
   { code: 'fr', label: 'Français' },
+  { code: 'pl', label: 'Polski' },
   { code: 'ru', label: 'Русский' },
 ];
 

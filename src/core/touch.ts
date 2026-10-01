@@ -50,7 +50,7 @@ const STICK_ZONE_FRACTION = 0.42;
 const LONG_PRESS_MS = 420;
 /**
  * How far above the aim point Game draws the placement ghost, in screen px.
- * Must match the lift in `Game.updateInteraction`.
+ * Must match the lift in `InteractionSystem.update`.
  */
 export const GHOST_LIFT = 70;
 /** Grab radius around the ghost, in CSS px before UI scale. */

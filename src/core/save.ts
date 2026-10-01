@@ -42,6 +42,40 @@ function removeStorage(key: string) {
   else localStorage.removeItem(key);
 }
 
+/** Leaderboards kept on the device, one per way of playing. */
+export type BoardId = 'endless' | 'daily' | 'campaign' | 'skirmish';
+export const BOARD_IDS: readonly BoardId[] = ['endless', 'daily', 'campaign', 'skirmish'];
+/** Entries kept per board. */
+export const BOARD_SIZE = 10;
+
+/** One finished run on a records board. */
+export interface RunRecord {
+  score: number;
+  waves: number;
+  kills: number;
+  seconds: number;
+  /** Sector index; -1 for a custom battle. */
+  level: number;
+  /** Heat (mutator points) the run was played with. */
+  heat: number;
+  /** Epoch ms the run ended. */
+  date: number;
+  seed: number;
+  /** Daily challenge date key, for the daily board. */
+  day?: string;
+}
+
+/** Daily challenge bookkeeping. */
+export interface DailyData {
+  /** Last UTC date the player finished a daily run on. */
+  lastKey: string;
+  streak: number;
+  bestStreak: number;
+  /** Date key → best score that day. Trimmed to the most recent DAILY_HISTORY days. */
+  days: Record<string, number>;
+}
+export const DAILY_HISTORY = 60;
+
 /** Everything that survives between runs. Versioned so old saves can migrate. */
 export interface SaveData {
   version: number;
@@ -57,6 +91,13 @@ export interface SaveData {
   relicsEarned: number;
   /** Endless personal best: sector index → highest wave reached. */
   endlessBest: Record<string, number>;
+  /** Lifetime commander XP — see data/ranks.ts. */
+  xp: number;
+  /** Top runs per board, best first. */
+  records: Record<BoardId, RunRecord[]>;
+  daily: DailyData;
+  /** Mutators last selected for a free endless run. */
+  mutators: string[];
   /** Shown once, right before the player's first deployment. */
   /** Touch coach tips already shown/learned — see render/coach.ts. */
   coachDone: string[];
@@ -104,7 +145,7 @@ export interface SaveData {
     southpaw: boolean;
     haptics: boolean;
     /** 'auto' follows the browser's language; the rest force one. */
-    locale: 'auto' | 'en' | 'ru' | 'de' | 'es' | 'fr';
+    locale: 'auto' | 'en' | 'ru' | 'de' | 'es' | 'fr' | 'pl';
     /** New Game+ tier, 1-10. Only offered once the campaign has been cleared once. */
     ngTier: number;
   };
@@ -123,6 +164,10 @@ export function emptySave(): SaveData {
     relicUpgrades: {},
     relicsEarned: 0,
     endlessBest: {},
+    xp: 0,
+    records: { endless: [], daily: [], campaign: [], skirmish: [] },
+    daily: { lastKey: '', streak: 0, bestStreak: 0, days: {} },
+    mutators: [],
     coachDone: [],
     seenEnemies: [],
     autoQualityCap: null,
@@ -159,6 +204,10 @@ export function loadSave(): SaveData {
       achievements: { ...base.achievements, ...(parsed.achievements ?? {}) },
       relicUpgrades: { ...base.relicUpgrades, ...(parsed.relicUpgrades ?? {}) },
       endlessBest: { ...base.endlessBest, ...(parsed.endlessBest ?? {}) },
+      xp: Number.isFinite(parsed.xp) ? Math.max(0, parsed.xp as number) : 0,
+      records: loadRecords(parsed.records),
+      daily: { ...base.daily, ...(parsed.daily ?? {}), days: { ...(parsed.daily?.days ?? {}) } },
+      mutators: Array.isArray(parsed.mutators) ? parsed.mutators.filter((m) => typeof m === 'string') : [],
       unlocked: parsed.unlocked ?? [],
       // Players who already sat through the old up-front legend know how to
       // move and open the drawer; they still get the tips for newer gestures.
@@ -171,6 +220,20 @@ export function loadSave(): SaveData {
   } catch {
     return emptySave();
   }
+}
+
+/** Keeps only well-formed rows, so a hand-edited or older save can't break the boards. */
+function loadRecords(raw: Partial<Record<BoardId, RunRecord[]>> | undefined): Record<BoardId, RunRecord[]> {
+  const out = emptySave().records;
+  for (const id of BOARD_IDS) {
+    const rows = raw?.[id];
+    if (!Array.isArray(rows)) continue;
+    out[id] = rows
+      .filter((r) => r && Number.isFinite(r.score) && Number.isFinite(r.waves))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, BOARD_SIZE);
+  }
+  return out;
 }
 
 let writeTimer: number | undefined;
@@ -257,6 +320,8 @@ export interface RunSnapshot {
   buildings: { k: string; tx: number; ty: number; hp: number; lv?: number; br?: string }[];
   /** Orbital strike charge in kill points (absent in older saves = empty). */
   strike?: number;
+  /** Active endless mutators (absent = none). */
+  mut?: string[];
   /** Remaining ore per seam, in world.nodes order. */
   nodes: number[];
   stats: {
