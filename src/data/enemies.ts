@@ -82,7 +82,7 @@ export const ENEMIES: Record<string, EnemyDef> = {
     id: 'crawler', name: 'Crawler', shape: 'crawler', behavior: 'charger',
     hp: 34, speed: 62, radius: 9, armor: 0, damage: 7, attackRate: 1.1, attackRange: 4,
     ore: 0, essence: 1, xp: 1, color: 0x9a4b5f, accent: 0xff7d92, cost: 1,
-    description: 'Baseline hive drone. Dangerous only in numbers.',
+    description: 'Baseline hive crawler. Dangerous only in numbers.',
   },
   mite: {
     id: 'mite', name: 'Mite', shape: 'mite', behavior: 'swarm',
@@ -178,7 +178,7 @@ export const ENEMIES: Record<string, EnemyDef> = {
       { id: 'slam', cooldown: 9, telegraph: 1.1, value: 150 },
       { id: 'spawn', cooldown: 14, telegraph: 1.4, value: 7 },
     ],
-    description: 'The brood mother. Ground-slams and vomits fresh drones.',
+    description: 'The brood mother. Ground-slams and spits out fresh swarmlings.',
   },
   devourer: {
     id: 'devourer', name: 'THE DEVOURER', shape: 'boss', behavior: 'charger',

@@ -95,7 +95,7 @@ export class Screens {
   /**
    * What the open screen's own Back/Close button does, so Escape and the
    * Android back button can do exactly the same. Null for screens with no
-   * way back (briefing, tech draft, results, the pause menu itself).
+   * way back (tech draft, results, the pause menu itself).
    */
   private backAction: (() => void) | null = null;
 

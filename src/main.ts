@@ -258,8 +258,6 @@ function beginLevel(
 ) {
   audio.unlock();
   applySettings();
-  // Starting anything new invalidates a stored run.
-  clearRun();
   const carry = !fresh && runActive ? game.carryOver() : undefined;
   game.startLevel(index, carry, extra.seed, { mode, mutators: extra.mutators, daily: extra.daily });
   applyControlScheme();
@@ -268,12 +266,15 @@ function beginLevel(
   game.frozen = true;
   state = 'briefing';
   screens.showBriefing(game, () => {
+    // Starting anything new invalidates a stored run — but only once the
+    // deployment really begins, so backing out of the briefing keeps it.
+    clearRun();
     // Touch controls are taught in context by the coach (render/coach.ts)
     // rather than an up-front legend; the legend lives on in the pause menu.
     coach.reset();
     state = 'playing';
     game.frozen = false;
-  });
+  }, toTitle);
 }
 
 game.onPhaseChange = (phase) => {
@@ -436,7 +437,7 @@ void onBackButton(() => {
     void minimizeApp();
   }
   // Screens with a Back button were handled by backOut(); what's left (the
-  // briefing, the tech draft, results) has no way back, so swallow the press.
+  // tech draft, results) has no way back, so swallow the press.
 });
 
 function onViewportChange() {
@@ -461,8 +462,9 @@ matchMedia('(orientation: portrait)').addEventListener('change', () => {
 
 function persistEverything() {
   saveNow(game.progress.data);
-  // Only writes when the run is in a resumable state; a no-op mid-wave.
-  if (runActive) game.autoSaveRun();
+  // Only writes when the run is in a resumable state; a no-op mid-wave. A run
+  // still on its briefing has not begun and must not overwrite a stored one.
+  if (runActive && state !== 'briefing') game.autoSaveRun();
 }
 
 addEventListener('beforeunload', persistEverything);
@@ -784,7 +786,7 @@ function showCrash(err: unknown) {
   // Best-effort persistence. Neither call is allowed to block the crash UI —
   // autoSaveRun already no-ops outside a build phase, but a corrupted state is
   // exactly the situation where "safe elsewhere" assumptions stop holding.
-  try { game.autoSaveRun(); } catch { /* ignore */ }
+  try { if (state !== 'briefing') game.autoSaveRun(); } catch { /* ignore */ }
   try { saveNow(game.progress.data); } catch { /* ignore */ }
 
   try {

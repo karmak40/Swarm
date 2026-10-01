@@ -81,8 +81,8 @@ export function showTitle(ui: Screens, progress: Progress, resumable?: ResumeInf
 
   if (resumable) {
     const label = resumable.endless
-      ? tr('screens.title.resumeEndless', 'Resume endless · wave {wave}', { wave: resumable.wave })
-      : tr('screens.title.resumeRun', 'Resume · {level}, wave {wave}',
+      ? tr('screens.title.resumeEndless', 'Load game · endless, wave {wave}', { wave: resumable.wave })
+      : tr('screens.title.resumeRun', 'Load game · {level}, wave {wave}',
         { level: resumable.levelName, wave: resumable.wave });
     const b = ui.button(label, () => ui.cb.onResumeRun());
     b.style.borderColor = 'rgba(92,242,160,0.55)';

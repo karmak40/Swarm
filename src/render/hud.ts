@@ -9,6 +9,7 @@ import {
 import { ENEMIES, enemyName } from '../data/enemies';
 import { levelName, levelSubtitle } from '../data/levels';
 import { Tile, TILE } from '../game/world';
+import { MAX_SPARE_CHASSIS } from '../game/entities';
 import type { Game } from '../game/game';
 import { css, rgba } from './palette';
 import { techRect } from './shapes';
@@ -247,7 +248,7 @@ export class Hud {
     // Both bars are labelled: they share a colour scheme, and the player's
     // own health read as a second core bar. Same word as the desktop rail.
     const coreLabel = tr('hud.compact.coreLabel', 'CORE');
-    const chassisLabel = tr('hud.rail.chassis', 'CHASSIS');
+    const chassisLabel = `${tr('hud.rail.chassis', 'CHASSIS')} ${spareChassisPips(game.player.spareChassis)}`;
     const labelW = this.measure(ctx, coreLabel);
     const chassisW = this.measure(ctx, chassisLabel);
     const gap = Math.round(6 * s);
@@ -832,6 +833,13 @@ export class Hud {
     ctx.font = `500 9px ${UI_FONT}`;
     ctx.fillStyle = css(0x55667e);
     ctx.fillText(tr('hud.rail.chassis', 'CHASSIS'), x, y);
+    // Spare chassis: how many more rebuilds are left; one returns per cleared wave.
+    ctx.textAlign = 'right';
+    ctx.fillStyle = css(p.spareChassis > 0 ? 0x7fd9ff : 0xff4f5e);
+    ctx.fillText(p.offline
+      ? tr('hud.rail.chassisOffline', 'OFFLINE')
+      : `${tr('hud.rail.spares', 'SPARES')} ${spareChassisPips(p.spareChassis)}`, x + bw, y);
+    ctx.textAlign = 'left';
     y += 12;
     ctx.fillStyle = rgba(0x000000, 0.6);
     ctx.fillRect(x, y, bw, 9);
@@ -973,7 +981,11 @@ export class Hud {
         : tr('hud.tooltip.costOre', '{ore} ore', { ore: cost.ore })];
       stats.push(...buildingStats(game, d));
       lines.push(stats.join('   ·   '));
-      if (!game.buildValid && game.lastError.life > 0) lines.push(`⚠ ${game.lastError.text}`);
+      // Say why the spot is refused as soon as the ghost turns red, not only after a click.
+      if (!game.buildValid) {
+        const reason = game.canPlace(d, game.buildTx, game.buildTy);
+        if (reason) lines.push(`⚠ ${reason}`);
+      }
     } else if (game.hoverBuilding) {
       const b = game.hoverBuilding;
       title = buildingName(b.def);
@@ -1233,4 +1245,9 @@ export class Hud {
       });
     }
   }
+}
+
+/** Filled pips for spare chassis left, hollow for spent ones. */
+function spareChassisPips(n: number): string {
+  return '◆'.repeat(n) + '◇'.repeat(Math.max(0, MAX_SPARE_CHASSIS - n));
 }

@@ -131,6 +131,8 @@ export interface SaveData {
     screenShake: number;
     showDamageNumbers: boolean;
     bloom: boolean;
+    /** Full-screen colour flashes on hits and blasts. */
+    flashes: boolean;
     /** 'auto' follows the pointer type; the rest force a scheme. */
     controls: 'auto' | 'touch' | 'desktop';
     /** Render quality tier; 'auto' re-detects on every boot. */
@@ -178,7 +180,7 @@ export function emptySave(): SaveData {
     },
     settings: {
       sfx: 0.85, music: 0.5, ui: 0.7, muted: false,
-      screenShake: 1, showDamageNumbers: true, bloom: true,
+      screenShake: 1, showDamageNumbers: true, bloom: true, flashes: true,
       controls: 'auto', quality: 'auto',
       autoAim: false, autoMine: false,
       uiScale: 1, southpaw: false, haptics: true,
@@ -320,6 +322,8 @@ export interface RunSnapshot {
   buildings: { k: string; tx: number; ty: number; hp: number; lv?: number; br?: string }[];
   /** Orbital strike charge in kill points (absent in older saves = empty). */
   strike?: number;
+  /** Spare pilot chassis left. Older saves lack it and restore a full stock. */
+  spare?: number;
   /** Active endless mutators (absent = none). */
   mut?: string[];
   /** Remaining ore per seam, in world.nodes order. */

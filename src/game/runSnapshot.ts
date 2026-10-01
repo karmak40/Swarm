@@ -8,6 +8,7 @@ import { TECH_CARDS } from '../data/tech';
 import { applySynergies } from '../data/synergies';
 import { applyMutators } from '../data/mutators';
 import { TILE } from './world';
+import { MAX_SPARE_CHASSIS } from './entities';
 import { WaveDirector } from './waves';
 import { RUN_SNAPSHOT_VERSION, type RunSnapshot } from '../core/save';
 import { type Game, PLAYER_BASE_HP, CORE_BASE_HP } from './game';
@@ -49,6 +50,7 @@ export function buildSnapshot(game: Game): RunSnapshot {
       ...(b.branch ? { br: b.branch } : {}),
     })),
     strike: Math.round(game.strike.charge * 10) / 10,
+    spare: game.player.spareChassis,
     ...(game.mutators.length ? { mut: [...game.mutators] } : {}),
     nodes: game.world.nodes.map((n) => Math.round(n.amount)),
     stats: {
@@ -109,6 +111,7 @@ export function applySnapshot(game: Game, snap: RunSnapshot): boolean {
   game.player.hp = clamp(snap.playerHp, 1, game.player.maxHp);
   game.player.x = clamp(snap.playerX, TILE, game.world.pxW - TILE);
   game.player.y = clamp(snap.playerY, TILE, game.world.pxH - TILE);
+  game.player.spareChassis = clamp(snap.spare ?? MAX_SPARE_CHASSIS, 0, MAX_SPARE_CHASSIS);
 
   game.ore = Math.max(0, snap.ore);
   game.strike.charge = Math.max(0, snap.strike ?? 0);

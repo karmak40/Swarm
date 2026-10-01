@@ -226,6 +226,7 @@ export class PresentationSystem {
   }
 
   addFlash(r: number, g: number, b: number, a: number) {
+    if (!this.game.progress.data.settings.flashes) return;
     if (a <= this.flash.a) return;
     this.flash = { r, g, b, a };
   }

@@ -26,6 +26,9 @@ const FIELD_QUERY_RADIUS = Math.max(
  * though drone *bays* are buildings — the bay's upkeep tick lives here, the
  * drones themselves are a separate lifecycle.
  */
+/** How far from the pilot (px) structures can be placed — see BuildingSystem.buildAnchor. */
+export const BUILD_REACH = 10 * TILE;
+
 export class BuildingSystem {
   readonly buildings: Building[] = [];
   /** Tile → building occupying it, for O(1) collision and placement checks. */
@@ -78,6 +81,17 @@ export class BuildingSystem {
    * valid. (Checking cost there used to drop any structure pricier than the
    * ore the player happened to be holding at save time.)
    */
+  /**
+   * Where the build reach is measured from: the pilot, or the core while the
+   * pilot is down (so a dead pilot never soft-locks the build phase). Without
+   * a reach the camera could be zoomed out and the whole map built up from
+   * one spot.
+   */
+  buildAnchor(): { x: number; y: number } {
+    const g = this.game;
+    return g.player.dead ? g.core : g.player;
+  }
+
   canPlace(def: BuildingDef, tx: number, ty: number, restoring = false): string | null {
     const g = this.game;
     const world = g.world;
@@ -99,8 +113,17 @@ export class BuildingSystem {
       }
     }
 
-    // Keep the core plaza clear.
     const cx = (tx + def.size / 2) * TILE, cy = (ty + def.size / 2) * TILE;
+    if (!restoring) {
+      const a = this.buildAnchor();
+      if (dist(cx, cy, a.x, a.y) > BUILD_REACH + def.size * TILE * 0.5) {
+        return g.player.dead
+          ? tr('game.place.tooFarCore', 'Too far from the core')
+          : tr('game.place.tooFarPilot', 'Too far from the pilot — move closer');
+      }
+    }
+
+    // Keep the core plaza clear.
     if (dist(cx, cy, g.core.x, g.core.y) < g.core.radius + def.size * TILE * 0.5 + 4) {
       return tr('game.place.tooCloseCore', 'Too close to the core');
     }

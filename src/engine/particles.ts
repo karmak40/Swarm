@@ -19,6 +19,10 @@ export const enum PKind {
 }
 
 const CAP = 4200;
+/** Glow particles allowed per frame — see Particles.glowBudget. */
+const GLOW_BUDGET = 14;
+/** No single glow flash grows past this radius. */
+const GLOW_MAX = 42;
 
 export class Particles {
   readonly x = new Float32Array(CAP);
@@ -43,6 +47,11 @@ export class Particles {
    * are the cheapest thing to cut on a weak GPU and the least missed.
    */
   density = 1;
+  /**
+   * Glow flashes left this frame. Dozens of turrets hitting one boss each
+   * spawned a glow, and the additive stack washed the boss out to white.
+   */
+  private glowBudget = GLOW_BUDGET;
 
   /** Scales an authored emitter count, always leaving at least one particle. */
   private n(count: number) {
@@ -60,6 +69,11 @@ export class Particles {
     life: number, size: number, color: number, kind: PKind,
     opts: { drag?: number; grav?: number; spin?: number; additive?: boolean } = {},
   ) {
+    if (kind === PKind.Glow) {
+      if (this.glowBudget <= 0) return;
+      this.glowBudget--;
+      size = Math.min(size, GLOW_MAX);
+    }
     const i = this.slot();
     this.x[i] = x; this.y[i] = y;
     this.vx[i] = vx; this.vy[i] = vy;
@@ -75,6 +89,7 @@ export class Particles {
   }
 
   update(dt: number) {
+    this.glowBudget = GLOW_BUDGET;
     for (let i = 0; i < this.count; i++) {
       const l = (this.life[i] -= dt);
       if (l <= 0) {
@@ -125,7 +140,7 @@ export class Particles {
       this.spawn(x, y, Math.cos(a) * s, Math.sin(a) * s,
         rand(0.1, 0.3), rand(1, 2.6) * power, color, PKind.Spark, { drag: 5 });
     }
-    this.spawn(x, y, 0, 0, 0.16, 7 * power, 0xffffff, PKind.Glow);
+    this.spawn(x, y, 0, 0, 0.12, 6 * power, color, PKind.Glow);
   }
 
   explosion(x: number, y: number, radius: number, color: number, smokeColor = 0x2b3444) {
@@ -144,7 +159,7 @@ export class Particles {
         { drag: 1.4, spin: rand(-1.4, 1.4), additive: false });
     }
     this.spawn(x, y, 0, 0, 0.4, radius, color, PKind.Ring, { drag: 0 });
-    this.spawn(x, y, 0, 0, 0.22, radius * 0.85, 0xffffff, PKind.Glow, { drag: 0 });
+    this.spawn(x, y, 0, 0, 0.2, radius * 0.6, color, PKind.Glow, { drag: 0 });
   }
 
   gib(x: number, y: number, color: number, count = 8, power = 1) {

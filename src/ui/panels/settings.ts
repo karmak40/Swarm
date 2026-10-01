@@ -165,6 +165,7 @@ export function showSettings(ui: Screens, progress: Progress, onBack: () => void
     (v) => { st.screenShake = v; }));
   panel.appendChild(toggle(tr('screens.settings.muteAll', 'Mute all'), st.muted, (v) => { st.muted = v; audio.setMuted(v); }));
   panel.appendChild(toggle(tr('screens.settings.bloom', 'Bloom'), st.bloom, (v) => { st.bloom = v; }));
+  panel.appendChild(toggle(tr('screens.settings.flashes', 'Screen flashes'), st.flashes, (v) => { st.flashes = v; }));
   panel.appendChild(toggle(tr('screens.settings.damageNumbers', 'Damage numbers'), st.showDamageNumbers,
     (v) => { st.showDamageNumbers = v; }));
 

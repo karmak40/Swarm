@@ -15,7 +15,7 @@ import { mutatorRow } from './daily';
 
 /** In-run modals: briefing, pause menu and the loadout shop. */
 
-export function showBriefing(ui: Screens, game: Game, onBegin: () => void) {
+export function showBriefing(ui: Screens, game: Game, onBegin: () => void, onBack: () => void) {
   const lv = game.level;
   const s = el('div', 'screen');
   const stack = el('div', 'stack');
@@ -79,8 +79,9 @@ export function showBriefing(ui: Screens, game: Game, onBegin: () => void) {
   }
 
   stack.appendChild(ui.button(tr('screens.briefing.begin', 'Begin deployment'), () => { ui.close(); onBegin(); }));
+  stack.appendChild(ui.button(tr('screens.briefing.back', 'Back'), onBack, 'btn ghost'));
   s.appendChild(stack);
-  ui.open('briefing', s);
+  ui.open('briefing', s, onBack);
 }
 
 export function showPause(ui: Screens, game: Game, canSave = false) {

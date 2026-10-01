@@ -67,6 +67,8 @@ import { LEVELS, waveScaling, ngDifficultyMult, makeSkirmishLevel } from '../dat
 import { WEAPONS, WEAPON_KINDS, ARMOR_TIERS } from '../data/loadout';
 import { TECH_CARDS } from '../data/tech';
 import { Game } from '../game/game';
+import { MAX_SPARE_CHASSIS } from '../game/entities';
+import { BUILD_REACH } from '../game/systems/buildings';
 import { TILE } from '../game/world';
 import type { Input } from '../core/input';
 import { saveNow, loadSave, BOARD_SIZE } from '../core/save';
@@ -123,6 +125,7 @@ function fortify(game: Game, kinds: BuildingKind[], cap = 72) {
   const roster: BuildingKind[] = guns.length ? guns : ['turret'];
   let placed = 0;
   let gun = 0;
+  const homeX = game.player.x, homeY = game.player.y;
   for (let ring = 4; ring <= 14 && placed < cap; ring++) {
     for (let i = 0; i < 34 && placed < cap; i++) {
       const a = (i / 34) * Math.PI * 2 + ring * 0.11;
@@ -130,12 +133,15 @@ function fortify(game: Game, kinds: BuildingKind[], cap = 72) {
       const ty = Math.round(w.coreTy + Math.sin(a) * ring);
       const kind: BuildingKind = placed % 3 === 2 ? 'generator' : roster[gun % roster.length];
       const def = BUILDINGS[kind];
+      // The bot "walks" to each spot: placement is limited to the pilot's reach.
+      game.player.x = (tx + 0.5) * TILE + TILE * 3; game.player.y = (ty + 0.5) * TILE;
       if (game.canPlace(def, tx, ty) !== null) continue;
       place(def, tx, ty);
       if (kind !== 'generator') gun++;
       placed++;
     }
   }
+  game.player.x = homeX; game.player.y = homeY;
   return placed;
 }
 
@@ -286,11 +292,23 @@ function testPlacementRules() {
   const w = game.world;
 
   check('cannot build on the core', game.canPlace(BUILDINGS.turret, w.coreTx, w.coreTy) !== null);
+  {
+    // Build reach: a spot right by the pilot is fine, the same spot is refused
+    // once the pilot walks away — no building the whole map from one place.
+    const tx = w.coreTx + 5, ty = w.coreTy;
+    game.player.x = (tx + 0.5) * TILE + TILE * 3; game.player.y = (ty + 0.5) * TILE;
+    check('can build next to the pilot', game.canPlace(BUILDINGS.turret, tx, ty) === null,
+      game.canPlace(BUILDINGS.turret, tx, ty) ?? '');
+    game.player.x = (tx + 0.5) * TILE + BUILD_REACH + TILE * 2;
+    check('cannot build beyond the pilot reach', game.canPlace(BUILDINGS.turret, tx, ty) !== null);
+  }
   check('cannot build out of bounds', game.canPlace(BUILDINGS.turret, -3, -3) !== null);
   check('cannot build on a gate',
     game.canPlace(BUILDINGS.turret, w.spawns[0].tx, w.spawns[0].ty) !== null);
 
   const seam = w.nodes[0];
+  // Stand beside the seam: placement is limited to the pilot's build reach.
+  game.player.x = (seam.tx + 0.5) * TILE + TILE * 2; game.player.y = (seam.ty + 0.5) * TILE;
   check('plain turret rejected on an ore seam',
     game.canPlace(BUILDINGS.turret, seam.tx, seam.ty) !== null);
   check('extractor accepted on an ore seam',
@@ -352,6 +370,7 @@ function testMining() {
 
   const place = (game as unknown as { place: Placer }).place.bind(game);
   game.ore = 9999;
+  game.player.x = (seam.tx + 0.5) * TILE + TILE * 2; game.player.y = (seam.ty + 0.5) * TILE;
   const ok = game.canPlace(BUILDINGS.extractor, seam.tx, seam.ty) === null;
   check('extractor placeable on the chosen seam', ok);
   if (ok) place(BUILDINGS.extractor, seam.tx, seam.ty);
@@ -1370,6 +1389,43 @@ function testDashUpgrades() {
   check('kinetic ram damaged the enemy it dashed through', e.hp < hpBefore, `${hpBefore} → ${e.hp}`);
   check('the ram hits an enemy once per dash, not once per frame',
     game.player.dashHitIds.length === 1, `${game.player.dashHitIds.length}`);
+}
+
+function testPilotChassis() {
+  console.log('\n▸ pilot repair & spare chassis');
+  const game = new Game();
+  game.startLevel(0, undefined, FIXED_SEED);
+  const p = game.player;
+  const idle = idleInput();
+
+  // Parked beside the core, a hurt pilot is patched up once the hits stop.
+  p.x = game.core.x + game.core.radius + 30; p.y = game.core.y;
+  p.hp = p.maxHp * 0.3;
+  p.sinceHurt = 99;
+  const hurt = p.hp;
+  for (let i = 0; i < 60; i++) game.update(DT, idle);
+  check('the core repairs a pilot parked beside it', p.hp > hurt && p.repairing, `${hurt} → ${p.hp}`);
+
+  // Far from the core, no repair.
+  p.x = game.core.x + 900; p.y = game.core.y;
+  p.hp = p.maxHp * 0.3;
+  const away = p.hp;
+  for (let i = 0; i < 60; i++) game.update(DT, idle);
+  check('no repair away from the core', p.hp <= away + 1e-6 && !p.repairing, `${away} → ${p.hp}`);
+
+  // Every death spends a spare; with none left the pilot stays down.
+  const kill = () => { p.invuln = 0; game.damagePlayer(p.maxHp * 10, true); };
+  kill();
+  check('a death spends a spare chassis', p.dead && p.spareChassis === MAX_SPARE_CHASSIS - 1, `${p.spareChassis}`);
+  p.spareChassis = 0;
+  p.dead = false; p.hp = p.maxHp;
+  kill();
+  check('with no spares the pilot goes offline', p.dead && p.offline);
+  for (let i = 0; i < 60 * 8; i++) game.update(DT, idle);
+  check('an offline pilot is not rebuilt mid-wave', p.dead);
+  game.playerSystem.restockChassis();
+  check('a cleared wave rebuilds the pilot and returns a spare', !p.dead && !p.offline && p.spareChassis === 1,
+    `${p.dead} ${p.spareChassis}`);
 }
 
 /** Runs the sim until a build phase opens, executing anything that spawns. */
@@ -3171,6 +3227,7 @@ testNewBosses();
 testEarlyWaveStart();
 testRelicShop();
 testDashUpgrades();
+testPilotChassis();
 testMuzzleFlare();
 testMissileBattery();
 testPulseLaser();

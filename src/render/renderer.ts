@@ -1,6 +1,7 @@
 import { TAU, clamp, lerp } from '../core/math';
 import { PKind } from '../engine/particles';
 import { Tile, TILE } from '../game/world';
+import { BUILD_REACH } from '../game/systems/buildings';
 import type { Game } from '../game/game';
 import { BUILDINGS } from '../data/buildings';
 import { ARMOR_TIERS } from '../data/loadout';
@@ -438,6 +439,20 @@ export class Renderer {
       return;
     }
     if (game.cursorMode !== 'build' || !game.buildKind) return;
+
+    // Build reach around the pilot: everything outside is off limits.
+    const anchor = game.buildingSystem.buildAnchor();
+    ctx.save();
+    ctx.strokeStyle = rgba(0x46d8ff, 0.4);
+    ctx.lineWidth = 2;
+    ctx.setLineDash([10, 8]);
+    ctx.lineDashOffset = -game.elapsed * 12;
+    ctx.beginPath();
+    ctx.arc(anchor.x, anchor.y, BUILD_REACH, 0, TAU);
+    ctx.stroke();
+    ctx.fillStyle = rgba(0x46d8ff, 0.04);
+    ctx.fill();
+    ctx.restore();
 
     const def = BUILDINGS[game.buildKind];
     const size = def.size * TILE;
@@ -987,6 +1002,22 @@ export class Renderer {
 
     ctx.restore();
 
+    // Core repair field: a soft green tether while the core patches the chassis.
+    if (p.repairing) {
+      const c = game.core;
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.strokeStyle = rgba(0x5cf2a0, 0.35 + Math.sin(t * 6) * 0.12);
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 8]);
+      ctx.lineDashOffset = -t * 40;
+      ctx.beginPath();
+      ctx.moveTo(c.x, c.y);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+      ctx.restore();
+    }
+
     // Mining beam.
     if (p.miningNode >= 0) {
       const n = game.world.nodes[p.miningNode];
@@ -1131,7 +1162,7 @@ export class Renderer {
       ctx.rotate(e.angle);
       drawEnemy(ctx, {
         shape: e.def.shape, r: e.radius, angle: e.angle, anim: e.anim, gait: e.gait,
-        color: e.def.color, accent: e.def.accent, flash: e.hitFlash,
+        color: e.def.color, accent: e.def.accent, flash: e.boss ? e.hitFlash * 0.3 : e.hitFlash,
         elite: e.elite, hpPct: e.hp / e.maxHp, submerged: e.submerged,
         casting: e.castingIndex >= 0,
       });
@@ -1181,10 +1212,12 @@ export class Renderer {
       gctx.beginPath();
       gctx.arc(e.x, e.y, e.radius * (e.boss ? 2 : 1.4), 0, TAU);
       gctx.fill();
+      // Big bodies are hit almost every frame: a white bloom on each hit kept
+      // a boss permanently washed out, so they flash in their own accent, faintly.
       if (e.hitFlash > 0) {
-        gctx.fillStyle = rgba(0xffffff, e.hitFlash * 0.5);
+        gctx.fillStyle = e.boss ? rgba(e.def.accent, e.hitFlash * 0.12) : rgba(0xffffff, e.hitFlash * 0.3);
         gctx.beginPath();
-        gctx.arc(e.x, e.y, e.radius * 1.6, 0, TAU);
+        gctx.arc(e.x, e.y, e.radius * (e.boss ? 1.2 : 1.4), 0, TAU);
         gctx.fill();
       }
     }
@@ -1591,7 +1624,7 @@ export class Renderer {
           break;
         }
         case PKind.Glow: {
-          ctx.fillStyle = rgba(col, t * 0.55);
+          ctx.fillStyle = rgba(col, t * 0.4);
           ctx.beginPath();
           ctx.arc(x, y, s * (0.6 + (1 - t)), 0, TAU);
           ctx.fill();
@@ -1600,9 +1633,9 @@ export class Renderer {
       }
 
       if (isAdd && s > 1.5) {
-        gctx.fillStyle = rgba(col, t * 0.4);
+        gctx.fillStyle = rgba(col, t * 0.3);
         gctx.beginPath();
-        gctx.arc(x, y, s * 1.8, 0, TAU);
+        gctx.arc(x, y, Math.min(s * 1.8, 60), 0, TAU);
         gctx.fill();
       }
     }

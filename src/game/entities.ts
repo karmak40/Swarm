@@ -43,6 +43,9 @@ export class Core implements Body {
 
 /* -------------------------------------------------------------------------- */
 
+/** How many times the pilot can be rebuilt before it has to sit out the wave. */
+export const MAX_SPARE_CHASSIS = 3;
+
 export class Player implements Body {
   x: number;
   y: number;
@@ -81,6 +84,14 @@ export class Player implements Body {
   /** Overheat 0..1 — firing raises it, it vents when you stop. */
   heat = 0;
   overheated = false;
+  /** Rebuilds left this run — see PlayerSystem.damagePlayer. One comes back per cleared wave. */
+  spareChassis = MAX_SPARE_CHASSIS;
+  /** Downed with no spare left: stays down until the wave is cleared. */
+  offline = false;
+  /** Seconds since the pilot last took damage — the core's repair field waits on it. */
+  sinceHurt = 99;
+  /** True while the core's repair field is patching the chassis (drawn as a tether). */
+  repairing = false;
 
   constructor(x: number, y: number, hp: number) {
     this.x = x;

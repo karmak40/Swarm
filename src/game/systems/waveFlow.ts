@@ -201,6 +201,7 @@ export class WaveSystem {
       audio.play('levelUp');
     }
 
+    g.playerSystem.restockChassis();
     g.waveIndex++;
     g.nextPlan = g.director.plan(g.waveIndex);
     g.prepRemaining = g.level.buildTime;

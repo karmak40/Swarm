@@ -637,7 +637,7 @@ export class TouchHud {
     const def = game.buildKind ? BUILDINGS[game.buildKind] : null;
     if (!def) return;
     const msg = !game.buildValid
-      ? (game.lastError.text || tr('touchHud.placement.cannotBuildHere', 'CANNOT BUILD HERE'))
+      ? (game.canPlace(def, game.buildTx, game.buildTy) || tr('touchHud.placement.cannotBuildHere', 'CANNOT BUILD HERE'))
       : touch.confirmPlacement
         ? tr('touchHud.placement.aimThenConfirm', 'TAP: AIM · DRAG: LOOK · ✓ PLACE')
         : tr('touchHud.placement.tapToPlace', 'TAP TO PLACE');

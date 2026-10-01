@@ -5,7 +5,7 @@ import {
 } from '../../core/math';
 import { PKind } from '../../engine/particles';
 import { ARMOR_TIERS, WEAPONS, type WeaponKind } from '../../data/loadout';
-import type { Enemy } from '../entities';
+import { MAX_SPARE_CHASSIS, type Enemy } from '../entities';
 import type { OreNode } from '../world';
 import { HAZARD_DPS, TILE, Tile } from '../world';
 import type { InputSource } from '../../core/input';
@@ -15,6 +15,12 @@ import type { Game } from '../game';
 const PLAYER_AIM_RANGE = 430;
 /** How close the player must be to work a seam. */
 const PLAYER_MINE_RANGE = 168;
+/** How far past the core's rim its repair field reaches. */
+const CORE_REPAIR_REACH = 110;
+/** Fraction of max hp the repair field restores per second. */
+const CORE_REPAIR_RATE = 0.12;
+/** The field only kicks in once the pilot has gone this long unhurt — no tanking a boss on top of the core. */
+const CORE_REPAIR_DELAY = 1.5;
 
 /** The player-controlled avatar: movement, aim/fire, mining, and its own hp/loadout. */
 export class PlayerSystem {
@@ -65,15 +71,11 @@ export class PlayerSystem {
     const p = g.player;
     if (p.dead) {
       // Downed players respawn at the core after a beat — the core is the fail state.
+      // With no spare chassis left the pilot sits the wave out (see restockChassis).
+      p.repairing = false;
+      if (p.offline) return;
       p.invuln -= dt;
-      if (p.invuln <= 0) {
-        p.dead = false;
-        p.hp = Math.round(p.maxHp * 0.5);
-        p.x = g.core.x + rand(-40, 40);
-        p.y = g.core.y + rand(-40, 40);
-        p.invuln = 2.2;
-        g.particles.ring(p.x, p.y, 40, 0x7fd9ff, 0.5);
-      }
+      if (p.invuln <= 0) this.respawn();
       return;
     }
 
@@ -108,6 +110,7 @@ export class PlayerSystem {
     if (g.perks.playerRegen > 0 && p.hp < p.maxHp) {
       p.hp = Math.min(p.maxHp, p.hp + g.perks.playerRegen * dt);
     }
+    this.coreRepair(dt);
 
     // Heat / overheat.
     if (p.overheated) {
@@ -375,11 +378,45 @@ export class PlayerSystem {
     p.recoil = 1;
   }
 
+  /** The core patches up a pilot parked next to it, once the shooting near them stops. */
+  private coreRepair(dt: number) {
+    const g = this.game;
+    const p = g.player;
+    const c = g.core;
+    p.sinceHurt += dt;
+    const reach = c.radius + CORE_REPAIR_REACH;
+    p.repairing = p.hp < p.maxHp && c.hp > 0 && p.sinceHurt >= CORE_REPAIR_DELAY
+      && dist2(p.x, p.y, c.x, c.y) <= reach * reach;
+    if (!p.repairing) return;
+    p.hp = Math.min(p.maxHp, p.hp + p.maxHp * CORE_REPAIR_RATE * dt);
+  }
+
+  private respawn() {
+    const g = this.game;
+    const p = g.player;
+    p.dead = false;
+    p.offline = false;
+    p.hp = Math.round(p.maxHp * 0.5);
+    p.x = g.core.x + rand(-40, 40);
+    p.y = g.core.y + rand(-40, 40);
+    p.invuln = 2.2;
+    p.sinceHurt = 99;
+    g.particles.ring(p.x, p.y, 40, 0x7fd9ff, 0.5);
+  }
+
+  /** Called on every cleared wave: one spare chassis back, and a pilot that sat the wave out is rebuilt. */
+  restockChassis() {
+    const p = this.game.player;
+    p.spareChassis = Math.min(MAX_SPARE_CHASSIS, p.spareChassis + 1);
+    if (p.offline) this.respawn();
+  }
+
   damagePlayer(amount: number, silent = false) {
     const g = this.game;
     const p = g.player;
     if (p.dead || p.invuln > 0) return;
     p.hp -= amount;
+    p.sinceHurt = 0;
     if (!silent) {
       p.hitFlash = 1;
       g.shake(4);
@@ -393,11 +430,21 @@ export class PlayerSystem {
       g.particles.explosion(p.x, p.y, 44, 0x7fd9ff, g.level.palette.rock);
       audio.play('explode');
       g.shake(12);
-      g.setBanner(
-        tr('game.banner.chassisDown', 'CHASSIS DOWN'),
-        tr('game.banner.chassisDownDetail', 'Rebuilding at the core…'),
-        3, '#ff4f5e',
-      );
+      if (p.spareChassis > 0) {
+        p.spareChassis--;
+        g.setBanner(
+          tr('game.banner.chassisDown', 'CHASSIS DOWN'),
+          tr('game.banner.chassisDownSpares', 'Rebuilding at the core… spare chassis left: {n}', { n: p.spareChassis }),
+          3, '#ff4f5e',
+        );
+      } else {
+        p.offline = true;
+        g.setBanner(
+          tr('game.banner.chassisLost', 'NO SPARE CHASSIS'),
+          tr('game.banner.chassisLostDetail', 'The core holds alone until the wave is cleared'),
+          3.4, '#ff4f5e',
+        );
+      }
     }
   }
 }

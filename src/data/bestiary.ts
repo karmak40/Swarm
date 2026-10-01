@@ -80,7 +80,7 @@ function abilityTip(id: string): string | null {
   switch (id) {
     case 'charge': return t('bestiary.tip.charge', 'Rears back before a charge: the wind-up is your warning.');
     case 'slam': return t('bestiary.tip.slam', 'Ground-slams everything close: keep the pilot out of the ring.');
-    case 'spawn': return t('bestiary.tip.spawn', 'Calls in fresh drones: splash keeps up with them.');
+    case 'spawn': return t('bestiary.tip.spawn', 'Spits out fresh swarmlings around itself: splash weapons clear them fastest.');
     case 'shed': return t('bestiary.tip.shed', 'Sheds live segments as it goes.');
     case 'beam': return t('bestiary.tip.beam', 'Sweeps a beam toward the core: do not line everything up on one axis.');
     case 'volley': return t('bestiary.tip.volley', 'Answers walls with a volley of orbs.');
